@@ -3,6 +3,9 @@
 """
 ONE_C_TITLE = 'Бухгалтерия'
 
+# Путь к Excel файлам
+XLSX_FILE_PATTERN = '~/Desktop/ОФД/*.xlsx'
+
 # Пути к изображениям для автоматизации
 ADD_BUTTON_IMAGE = 'C:/1c_images/add_button.PNG'
 CREATE_NOMENCLATURE_IMAGE = 'C:/1c_images/create_nomenclature.PNG'

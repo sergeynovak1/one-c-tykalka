@@ -7,6 +7,8 @@ import glob
 import os
 import re
 
+from config import XLSX_FILE_PATTERN
+
 # Устанавливаем точность для Decimal
 getcontext().prec = 28
 
@@ -22,7 +24,7 @@ def find_xlsx_file():
         FileNotFoundError: Если файлы не найдены
         ValueError: Если найдено несколько файлов
     """
-    path = os.path.expanduser("~/Desktop/ОФД/*.xlsx")
+    path = os.path.expanduser(XLSX_FILE_PATTERN)
     xlsx_files = glob.glob(path)
 
     if not xlsx_files:
