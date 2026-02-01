@@ -123,12 +123,29 @@ def fill_price(price):
     """
     Заполняет поле цены.
     Сначала выделяет всё содержимое (Ctrl+A), затем ввод заменяет старую цену.
+    После ввода проверяет содержимое поля; при несовпадении перезаписывает ещё раз.
 
     Args:
         price (str): Цена
     """
+    expected = str(price).strip()
+    time.sleep(0.1)  # пауза, чтобы поле успело получить фокус перед выделением
     pyautogui.hotkey('ctrl', 'a')
-    pyautogui.write(price, interval=TYPING_INTERVAL)
+    pyautogui.write(expected, interval=TYPING_INTERVAL)
+
+    # Проверка: копируем содержимое поля и сравниваем с ожидаемым
+    saved_clipboard = pyperclip.paste()
+    pyautogui.hotkey('ctrl', 'a')
+    pyautogui.hotkey('ctrl', 'c')
+    time.sleep(PASTE_AFTER_COPY_DELAY)
+    actual = pyperclip.paste().strip()
+    pyperclip.copy(saved_clipboard)
+
+    if actual != expected:
+        time.sleep(0.1)
+        pyautogui.hotkey('ctrl', 'a')
+        pyautogui.write(expected, interval=TYPING_INTERVAL)
+
     pyautogui.press('enter')
 
 
