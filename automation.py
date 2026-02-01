@@ -16,8 +16,7 @@ from config import (
     AFTER_CREATE_DELAY,
     AFTER_CTRL_ENTER_DELAY,
     FIELD_DELAY,
-    QUANTITY_DELAY,
-    AFTER_ENTER_DELAY,
+    PASTE_BUFFER_DELAY,
     TYPING_INTERVAL,
     IMAGE_CONFIDENCE,
 )
@@ -72,9 +71,8 @@ def click_add_button(is_first_row):
 
 def paste_text(text):
     pyperclip.copy(text)
-    time.sleep(0.1)
     pyautogui.hotkey('ctrl', 'v')
-    time.sleep(0.1)
+    time.sleep(PASTE_BUFFER_DELAY)
 
 
 def fill_nomenclature(nomenclature):
@@ -115,9 +113,7 @@ def fill_quantity(quantity):
     """
     pyautogui.write(quantity, interval=TYPING_INTERVAL)
     pyautogui.hotkey('ctrl', 'enter')
-    time.sleep(QUANTITY_DELAY)
     pyautogui.press('enter')
-    time.sleep(AFTER_ENTER_DELAY)
 
 
 def fill_price(price):
