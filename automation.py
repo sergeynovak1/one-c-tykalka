@@ -20,7 +20,6 @@ from config import (
     AFTER_ENTER_DELAY,
     TYPING_INTERVAL,
     IMAGE_CONFIDENCE,
-    DEFAULT_LAST_FIELDS_COUNT
 )
 
 def set_english_layout():
@@ -44,12 +43,6 @@ def activate_one_c_window():
     Raises:
         Exception: Если окно не найдено
     """
-    # for w in pyautogui.getAllWindows():
-    #     if w.title and ONE_C_TITLE in w.title:
-    #         w.activate()
-    #         break
-    # time.sleep(WINDOW_ACTIVATION_DELAY)
-
     windows = gw.getWindowsWithTitle(ONE_C_TITLE)
     if windows:
         window = windows[0]
@@ -139,26 +132,6 @@ def fill_price(price):
     pyautogui.press('enter')
 
 
-def fill_cost(cost):
-    """
-    Заполняет поле суммы.
-
-    Args:
-        cost (str): Сумма
-    """
-    pyautogui.press('del')
-    pyautogui.write(cost, interval=TYPING_INTERVAL)
-    pyautogui.press('enter')
-
-
-def skip_default_fields():
-    """
-    Пропускает остальные поля по умолчанию.
-    """
-    for _ in range(DEFAULT_LAST_FIELDS_COUNT):
-        pyautogui.press('enter')
-
-
 def fill_product_row(nomenclature, quantity, price, cost, is_first_row=False):
     """
     Заполняет одну строку товара.
@@ -172,10 +145,6 @@ def fill_product_row(nomenclature, quantity, price, cost, is_first_row=False):
     fill_nomenclature(nomenclature)
     fill_quantity(quantity)
     fill_price(price)
-    fill_cost(cost)
-    skip_default_fields()
-
-    print('Строка добавлена')
 
 
 def automate_data_entry(product_data):
