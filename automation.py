@@ -123,6 +123,7 @@ def fill_price(price):
     Args:
         price (str): Цена
     """
+    pyautogui.hotkey('ctrl', 'a')
     pyautogui.press('del')
     pyautogui.write(price, interval=TYPING_INTERVAL)
     pyautogui.press('enter')
