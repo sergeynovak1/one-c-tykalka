@@ -89,7 +89,7 @@ def load_and_prepare_data(file_path):
     Returns:
         pd.DataFrame: Подготовленный DataFrame
     """
-    df = pd.read_excel(file_path)
+    df = pd.read_excel(file_path, dtype={"Наименование": str})
 
     # Выбираем нужные столбцы
     df = df[
