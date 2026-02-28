@@ -111,13 +111,26 @@ def paste_text(text):
 def fill_nomenclature(nomenclature):
     """
     Заполняет поле номенклатуры.
+    Сначала очищает поле (Del), вставляет текст через буфер.
+    После ввода проверяет содержимое поля; при несовпадении очищает и вставляет ещё раз.
 
     Args:
         nomenclature (str): Наименование номенклатуры
     """
+    expected = str(nomenclature).strip()
     pyautogui.press('del')
-    paste_text(nomenclature)
+    paste_text(expected)
     time.sleep(NOMENCLATURE_INPUT_DELAY)
+
+    # Проверка: копируем содержимое поля и сравниваем с ожидаемым
+    pyautogui.hotkey('ctrl', 'a')
+    pyautogui.hotkey('ctrl', 'c')
+    actual = pyperclip.paste().strip()
+
+    if actual != expected:
+        pyautogui.press('del')
+        paste_text(expected)
+        time.sleep(NOMENCLATURE_INPUT_DELAY)
 
     # Проверяем, нужно ли создать новую номенклатуру
     try:
