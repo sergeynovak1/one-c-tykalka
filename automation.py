@@ -10,6 +10,8 @@ from config import (
     ONE_C_TITLE,
     ADD_BUTTON_IMAGE,
     CREATE_NOMENCLATURE_IMAGE,
+    REFUND_BUTTON_IMAGE,
+    PRODUCT_BUTTON_IMAGE,
     WINDOW_ACTIVATION_DELAY,
     BETWEEN_ROWS_DELAY,
     NOMENCLATURE_INPUT_DELAY,
@@ -67,6 +69,34 @@ def click_add_button(is_first_row):
     pyautogui.click(location)
     if not is_first_row:
         pyautogui.click(location)
+
+
+def click_refund_button():
+    """
+    Нажимает кнопку "Возвраты" в интерфейсе 1С.
+
+    Raises:
+        Exception: Если кнопка не найдена
+    """
+    location = pyautogui.locateOnScreen(REFUND_BUTTON_IMAGE, confidence=IMAGE_CONFIDENCE)
+    if location is None:
+        raise Exception('Кнопка "Возвраты" не найдена')
+    pyautogui.click(location)
+    time.sleep(WINDOW_ACTIVATION_DELAY)
+
+
+def click_product_button():
+    """
+    Нажимает кнопку "Товары" в интерфейсе 1С.
+
+    Raises:
+        Exception: Если кнопка не найдена
+    """
+    location = pyautogui.locateOnScreen(PRODUCT_BUTTON_IMAGE, confidence=IMAGE_CONFIDENCE)
+    if location is None:
+        raise Exception('Кнопка "Товары" не найдена')
+    pyautogui.click(location)
+    time.sleep(WINDOW_ACTIVATION_DELAY)
 
 
 def paste_text(text):

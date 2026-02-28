@@ -79,9 +79,23 @@ def clean_spaces(text, max_length=100):
     return cleaned
 
 
+def _find_calculation_type_column(df):
+    """
+    Находит столбец, в названии которого есть "Признак расчета".
+
+    Returns:
+        str: Имя столбца или None
+    """
+    for col in df.columns:
+        if "Признак расчета" in str(col):
+            return col
+    return None
+
+
 def load_and_prepare_data(file_path):
     """
     Загружает и подготавливает данные из Excel файла.
+    Фильтрует по "Приход" и "Возврат прихода" в столбце "Признак расчета".
 
     Args:
         file_path (str): Путь к Excel файлу
@@ -91,20 +105,40 @@ def load_and_prepare_data(file_path):
     """
     df = pd.read_excel(file_path, dtype={"Наименование": str})
 
+    # Ищем столбец "Признак расчета"
+    calc_col = _find_calculation_type_column(df)
+    if calc_col is None:
+        raise ValueError(
+            "Не найден столбец с 'Признак расчета' в названии. "
+            "Проверьте структуру Excel файла."
+        )
+
     # Выбираем нужные столбцы
     df = df[
         [
             "Наименование",
             "Цена товара",
             "Количество единиц измерения в чеке",
-            "Сумма товара"
+            "Сумма товара",
+            calc_col,
         ]
     ].rename(columns={
         "Наименование": "nomenclature",
         "Цена товара": "price",
         "Количество единиц измерения в чеке": "quantity",
-        "Сумма товара": "cost"
+        "Сумма товара": "cost",
+        calc_col: "calculation_type",
     })
+
+    # Фильтруем только Приход и Возврат прихода
+    allowed_values = {"Приход", "Возврат прихода"}
+    df["calculation_type"] = df["calculation_type"].astype(str).str.strip()
+    df = df[df["calculation_type"].isin(allowed_values)]
+
+    if df.empty:
+        raise ValueError(
+            "После фильтрации по 'Приход' и 'Возврат прихода' данных не осталось."
+        )
 
     # Преобразование строк с деньгами в Decimal
     df["price"] = df["price"].apply(to_decimal)
@@ -120,7 +154,7 @@ def load_and_prepare_data(file_path):
 
 def group_data(df):
     """
-    Группирует данные по номенклатуре и цене.
+    Группирует данные по номенклатуре, цене и признаку расчёта (Приход/Возврат прихода).
 
     Args:
         df (pd.DataFrame): DataFrame с данными
@@ -129,7 +163,7 @@ def group_data(df):
         pd.DataFrame: Сгруппированный DataFrame
     """
     grouped = (
-        df.groupby(["nomenclature", "price"], as_index=False)
+        df.groupby(["nomenclature", "price", "calculation_type"], as_index=False)
         .agg({
             "quantity": "sum",
             "cost": "sum"
@@ -155,12 +189,17 @@ def prepare_result_list(grouped_df):
     return result
 
 
+REFUND_TYPE = "Возврат прихода"
+RECEIPT_TYPE = "Приход"
+
+
 def process_excel_file():
     """
     Основная функция для обработки Excel файла.
+    Разделяет данные на возвраты (Возврат прихода) и обычные товары (Приход).
 
     Returns:
-        list: Список кортежей с обработанными данными
+        tuple: (refunds_list, products_list) — списки кортежей (nomenclature, quantity, price, cost)
     """
     # Находим файл
     file_path = find_xlsx_file()
@@ -169,15 +208,22 @@ def process_excel_file():
     # Загружаем и подготавливаем данные
     df = load_and_prepare_data(file_path)
 
-    # Группируем данные
+    # Группируем данные (по номенклатуре, цене и признаку расчёта)
     grouped = group_data(df)
 
-    # Подготавливаем результат
-    result = prepare_result_list(grouped)
+    # Разделяем на возвраты и обычные товары
+    refunds_df = grouped[grouped["calculation_type"] == REFUND_TYPE]
+    products_df = grouped[grouped["calculation_type"] == RECEIPT_TYPE]
 
-    # Вывод результатов
-    print(f"\n📊 Найдено {len(result)} уникальных позиций:")
-    for item in result:
-        print(item)
+    refunds_list = prepare_result_list(refunds_df.drop(columns=["calculation_type"]))
+    products_list = prepare_result_list(products_df.drop(columns=["calculation_type"]))
 
-    return result
+    print(f"\n📊 Возвраты (Возврат прихода): {len(refunds_list)} позиций")
+    for item in refunds_list:
+        print(f"  ↩ {item}")
+
+    print(f"\n📊 Обычные товары (Приход): {len(products_list)} позиций")
+    for item in products_list:
+        print(f"  → {item}")
+
+    return refunds_list, products_list
