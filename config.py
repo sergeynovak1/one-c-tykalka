@@ -1,7 +1,10 @@
 """
 Конфигурационные константы.
 """
-ONE_C_TITLE = 'Бухгалтерия'
+ONE_C_TITLE = "Бухгалтерия"
+
+REFUND_TYPE = "Возврат прихода"
+RECEIPT_TYPE = "Приход"
 
 # Путь к Excel файлам
 XLSX_FILE_PATTERN = '~/Desktop/ОФД/*.xlsx'

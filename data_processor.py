@@ -7,7 +7,7 @@ import glob
 import os
 import re
 
-from config import XLSX_FILE_PATTERN
+from config import XLSX_FILE_PATTERN, REFUND_TYPE, RECEIPT_TYPE
 
 # Устанавливаем точность для Decimal
 getcontext().prec = 28
@@ -187,10 +187,6 @@ def prepare_result_list(grouped_df):
         for row in grouped_df.itertuples(index=False)
     ]
     return result
-
-
-REFUND_TYPE = "Возврат прихода"
-RECEIPT_TYPE = "Приход"
 
 
 def process_excel_file():
