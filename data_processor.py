@@ -54,7 +54,7 @@ def to_decimal(value):
     """
     if pd.isna(value):
         return Decimal("0")
-    s = str(value).replace(" ", "")
+    s = re.sub(r"\s+", "", str(value))
     # Если есть и запятая, и точка — запятая это разделитель тысяч, удаляем
     if "," in s and "." in s:
         s = s.replace(",", "")
