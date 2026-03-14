@@ -26,7 +26,8 @@ from config import (
     PASTE_AFTER_COPY_DELAY,
     TYPING_INTERVAL,
     IMAGE_CONFIDENCE,
-    BATCH_CHECK_SIZE,
+    BATCH_CHECK_PERCENT,
+    BATCH_CHECK_MIN,
     MAX_SUM_RETRY_ATTEMPTS,
     ERROR_INJECTION_PERCENT,
 )
@@ -334,15 +335,17 @@ def _count_added_in_last_batch(batch_offset: int, batch_size: int) -> int:
 
 def with_batch_sum_check(fn):
     """
-    Декоратор: после каждых BATCH_CHECK_SIZE записей сравнивает
+    Декоратор: после каждых batch_size записей сравнивает
     ожидаемую сумму с суммой в 1С.
+    batch_size вычисляется как BATCH_CHECK_PERCENT от общего числа записей, но не меньше BATCH_CHECK_MIN.
     """
 
     def wrapper(product_data, is_refund=False, **kwargs):
         global _last_read_total
         cumulative_expected = _last_read_total
-        for i in range(0, len(product_data), BATCH_CHECK_SIZE):
-            chunk = product_data[i : i + BATCH_CHECK_SIZE]
+        batch_size = max(BATCH_CHECK_MIN, int(len(product_data) * BATCH_CHECK_PERCENT))
+        for i in range(0, len(product_data), batch_size):
+            chunk = product_data[i : i + batch_size]
             fn(chunk, batch_offset=i, **kwargs)
             chunk_sum = _calc_expected_sum(chunk)
             cumulative_expected += -chunk_sum if is_refund else chunk_sum
