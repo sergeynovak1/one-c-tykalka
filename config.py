@@ -15,6 +15,7 @@ CREATE_NOMENCLATURE_IMAGE = 'C:/1c_images/create_nomenclature.PNG'
 REFUND_BUTTON_IMAGE = 'C:/1c_images/refund_button.PNG'
 PRODUCT_BUTTON_IMAGE = 'C:/1c_images/product_button.PNG'
 TOTAL_SUM_IMAGE = 'C:/1c_images/total_sum.PNG'
+TABLE_IMAGE = 'C:/1c_images/table.PNG'
 
 # Задержки (в секундах)
 WINDOW_ACTIVATION_DELAY = 0.7
@@ -33,3 +34,7 @@ IMAGE_CONFIDENCE = 0.9
 
 # Интервал проверки суммы при вводе (каждые N записей)
 BATCH_CHECK_SIZE = 2
+
+# Ожидаемый процент ошибок при тестировании декоратора проверки сумм (0 = отключено).
+# При > 0 в указанном % случаев вводит баг: пропуск записи или неправильная цена.
+ERROR_INJECTION_PERCENT = 0
