@@ -156,7 +156,6 @@ def read_total_from_1c():
     pyautogui.hotkey('ctrl', 'c')
     time.sleep(PASTE_AFTER_COPY_DELAY)
     raw = pyperclip.paste().strip()
-    print(f'x{raw}x')
     return to_decimal(raw)
 
 
