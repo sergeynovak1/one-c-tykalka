@@ -1,6 +1,7 @@
 """
 Модуль для автоматизации ввода данных в 1С.
 """
+import sys
 import pyautogui
 import random
 from decimal import Decimal
@@ -26,6 +27,7 @@ from config import (
     TYPING_INTERVAL,
     IMAGE_CONFIDENCE,
     BATCH_CHECK_SIZE,
+    MAX_SUM_RETRY_ATTEMPTS,
     ERROR_INJECTION_PERCENT,
 )
 from data_processor import to_decimal
@@ -303,12 +305,22 @@ def _delete_last_n_rows(n):
         pyautogui.press('del')
 
 
-def _diagnose_sum_mismatch(added_count: int):
+def _count_added_in_last_batch(batch_offset: int, batch_size: int) -> int:
     """
-    При несовпадении суммы: фокус на таблицу, перейти в левую ячейку,
-    Ctrl+A, получить содержимое, проверить пропуски и вывести в консоль.
-    Возвращает True, если найдены пропущенные строки.
+    Вычисляет, сколько записей из последнего батча фактически добавилось в таблицу.
+
+    Копирует содержимое таблицы (Ctrl+A, Ctrl+C) и по количеству строк
+    определяет, сколько записей из батча попало в 1С.
+
+    Args:
+        batch_offset: Количество записей до этого батча (индекс начала чанка).
+        batch_size: Размер батча (сколько записей пытались добавить).
+
+    Returns:
+        Число записей из батча, которые реально есть в таблице (0..batch_size).
     """
+    if batch_size <= 0:
+        return 0
     focus_table_and_navigate_rows()
     time.sleep(FIELD_DELAY)
     pyautogui.hotkey('ctrl', 'a')
@@ -316,7 +328,8 @@ def _diagnose_sum_mismatch(added_count: int):
     time.sleep(PASTE_AFTER_COPY_DELAY)
     raw = pyperclip.paste().strip()
     lines = raw.split('\n')
-    return len(lines) % added_count or BATCH_CHECK_SIZE
+    n_added = len(lines) - batch_offset
+    return max(0, min(n_added, batch_size))
 
 
 def with_batch_sum_check(fn):
@@ -342,19 +355,25 @@ def with_batch_sum_check(fn):
                     print(
                         f"⚠ После {records_count} записей: ожидалось {cumulative_expected}, в 1С: {actual}"
                     )
-                    n_to_delete = _diagnose_sum_mismatch(len(chunk))
-                    if n_to_delete:
-                        print(f"  Удаляю {n_to_delete} записей и заполняю заново...")
-                        focus_table_and_navigate_rows()
-                        time.sleep(FIELD_DELAY)
-                        _delete_last_n_rows(n_to_delete)
-                        time.sleep(FIELD_DELAY)
+                    for attempt in range(1, MAX_SUM_RETRY_ATTEMPTS + 1):
+                        n_added = _count_added_in_last_batch(i, len(chunk))
+                        if n_added > 0:
+                            print(f"  Попытка {attempt}/{MAX_SUM_RETRY_ATTEMPTS}: удаляю {n_added} записей и заполняю заново...")
+                            focus_table_and_navigate_rows()
+                            time.sleep(FIELD_DELAY)
+                            _delete_last_n_rows(n_added)
+                            time.sleep(FIELD_DELAY)
+                        else:
+                            print(f"  Попытка {attempt}/{MAX_SUM_RETRY_ATTEMPTS}: в батч не добавилось ни одной записи, повторяю ввод...")
                         fn(chunk, batch_offset=i, **kwargs)
                         actual_retry = _read_and_cache_total()
                         if actual_retry is not None and actual_retry == cumulative_expected:
                             print(f"✅ После повторного ввода сумма сошлась ({cumulative_expected})")
-                        else:
-                            print(f"⚠ После повторного ввода сумма: ожидалось {cumulative_expected}, в 1С: {actual_retry}")
+                            break
+                        print(f"⚠ После попытки {attempt}: ожидалось {cumulative_expected}, в 1С: {actual_retry}")
+                    else:
+                        print(f"❌ Сумма не сошлась после {MAX_SUM_RETRY_ATTEMPTS} попыток. Завершение работы.")
+                        sys.exit(1)
             else:
                 print(f"⚠ Не удалось прочитать сумму из 1С после {records_count} записей")
 
