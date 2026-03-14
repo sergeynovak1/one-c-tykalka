@@ -346,7 +346,7 @@ def with_batch_sum_check(fn):
             fn(chunk, batch_offset=i, **kwargs)
             chunk_sum = _calc_expected_sum(chunk)
             cumulative_expected += -chunk_sum if is_refund else chunk_sum
-            actual = _read_and_cache_total(is_refund=is_refund)
+            actual = _read_and_cache_total()
             records_count = i + len(chunk)
             if actual is not None:
                 if actual == cumulative_expected:
