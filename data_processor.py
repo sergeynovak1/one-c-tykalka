@@ -172,6 +172,22 @@ def group_data(df):
     return grouped
 
 
+def get_total_difference(refunds_list, products_list):
+    """
+    Вычисляет общую сумму — разницу между суммой (цена*колво) продуктов и возвратов.
+
+    Args:
+        refunds_list: список кортежей (nomenclature, quantity, price, cost)
+        products_list: список кортежей (nomenclature, quantity, price, cost)
+
+    Returns:
+        Decimal: products_sum - refunds_sum
+    """
+    products_sum = sum(to_decimal(item[2]) * to_decimal(item[1]) for item in products_list)
+    refunds_sum = sum(to_decimal(item[2]) * to_decimal(item[1]) for item in refunds_list)
+    return products_sum - refunds_sum
+
+
 def prepare_result_list(grouped_df):
     """
     Подготавливает список кортежей в нужном формате.
@@ -180,10 +196,10 @@ def prepare_result_list(grouped_df):
         grouped_df (pd.DataFrame): Сгруппированный DataFrame
 
     Returns:
-        list: Список кортежей (nomenclature, quantity, price, cost)
+        list: Список кортежей (nomenclature, quantity, price)
     """
     result = [
-        (row.nomenclature, str(row.quantity), str(row.price), str(row.cost))
+        (row.nomenclature, str(row.quantity), str(row.price))
         for row in grouped_df.itertuples(index=False)
     ]
     return result

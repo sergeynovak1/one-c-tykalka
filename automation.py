@@ -187,7 +187,7 @@ def fill_price(price):
     pyautogui.press('enter')
 
 
-def fill_product_row(nomenclature, quantity, price, cost, is_first_row=False):
+def fill_product_row(nomenclature, quantity, price, is_first_row=False):
     """
     Заполняет одну строку товара.
     """
@@ -216,11 +216,10 @@ def automate_data_entry(product_data):
     activate_one_c_window()
 
     # Заполняем строки
-    for idx, (nomenclature, quantity, price, cost) in enumerate(product_data):
+    for idx, (nomenclature, quantity, price) in enumerate(product_data):
         fill_product_row(
             nomenclature,
             quantity,
             price,
-            cost,
             is_first_row=(idx == 0)
         )

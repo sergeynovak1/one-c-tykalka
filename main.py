@@ -2,7 +2,7 @@
 Главный модуль для запуска приложения.
 Обрабатывает Excel файл и автоматизирует ввод данных в 1С.
 """
-from data_processor import process_excel_file
+from data_processor import process_excel_file, get_total_difference
 from automation import (
     automate_data_entry,
     click_refund_button,
@@ -20,6 +20,10 @@ def main():
     try:
         # Обрабатываем Excel файл: разделяем на возвраты и товары
         refunds_list, products_list = process_excel_file()
+
+        # Общая сумма: разница между продуктами и возвратами (цена*колво)
+        total_sum = get_total_difference(refunds_list, products_list)
+        print(f"\n💰 Общая сумма (продукты − возвраты): {total_sum}")
 
         # Автоматизируем ввод данных в 1С
         print("\n🤖 Начинаю автоматизацию ввода данных в 1С...")
