@@ -147,19 +147,16 @@ def read_total_from_1c():
     Returns:
         Decimal | None: Прочитанная сумма или None, если не удалось найти поле или распарсить
     """
-    try:
-        location = pyautogui.locateOnScreen(TOTAL_SUM_IMAGE, confidence=IMAGE_CONFIDENCE)
-        if location is None:
-            return None
-        pyautogui.click(location)
-        time.sleep(FIELD_DELAY)
-        pyautogui.hotkey('ctrl', 'a')
-        pyautogui.hotkey('ctrl', 'c')
-        time.sleep(PASTE_AFTER_COPY_DELAY)
-        raw = pyperclip.paste().strip()
-        return to_decimal(raw)
-    except Exception:
-            return None
+    location = pyautogui.locateOnScreen(TOTAL_SUM_IMAGE, confidence=IMAGE_CONFIDENCE)
+    if location is None:
+        return None
+    pyautogui.click(location)
+    time.sleep(FIELD_DELAY)
+    pyautogui.hotkey('ctrl', 'a')
+    pyautogui.hotkey('ctrl', 'c')
+    time.sleep(PASTE_AFTER_COPY_DELAY)
+    raw = pyperclip.paste().strip()
+    return to_decimal(raw)
 
 
 def paste_text(text):
@@ -349,7 +346,7 @@ def with_batch_sum_check(fn):
             fn(chunk, batch_offset=i, **kwargs)
             chunk_sum = _calc_expected_sum(chunk)
             cumulative_expected += -chunk_sum if is_refund else chunk_sum
-            actual = _read_and_cache_total()
+            actual = _read_and_cache_total(is_refund=is_refund)
             records_count = i + len(chunk)
             if actual is not None:
                 if actual == cumulative_expected:
