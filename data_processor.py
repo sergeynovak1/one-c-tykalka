@@ -43,6 +43,8 @@ def find_xlsx_file():
 def to_decimal(value):
     """
     Преобразует значение в Decimal, обрабатывая строки с деньгами.
+    Поддерживает: запятая как разделитель тысяч (122,368.00),
+    запятая как десятичный разделитель (122,38), пробелы.
 
     Args:
         value: Значение для преобразования
@@ -52,11 +54,14 @@ def to_decimal(value):
     """
     if pd.isna(value):
         return Decimal("0")
-    return Decimal(
-        str(value)
-        .replace(" ", "")
-        .replace(",", ".")
-    )
+    s = str(value).replace(" ", "")
+    # Если есть и запятая, и точка — запятая это разделитель тысяч, удаляем
+    if "," in s and "." in s:
+        s = s.replace(",", "")
+    # Если только запятая — это десятичный разделитель
+    elif "," in s:
+        s = s.replace(",", ".")
+    return Decimal(s)
 
 
 def clean_spaces(text, max_length=100):

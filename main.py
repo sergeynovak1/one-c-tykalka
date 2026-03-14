@@ -9,6 +9,7 @@ from automation import (
     click_product_button,
     activate_one_c_window,
     set_english_layout,
+    read_total_from_1c,
 )
 
 
@@ -20,6 +21,10 @@ def main():
     try:
         # Обрабатываем Excel файл: разделяем на возвраты и товары
         refunds_list, products_list = process_excel_file()
+
+        if not refunds_list and not products_list:
+            print("\n⚠ Нет данных для загрузки (ни возвратов, ни товаров).")
+            return
 
         # Общая сумма: разница между продуктами и возвратами (цена*колво)
         total_sum = get_total_difference(refunds_list, products_list)
@@ -42,10 +47,17 @@ def main():
             click_product_button()
             automate_data_entry(products_list)
 
-        if not refunds_list and not products_list:
-            print("\n⚠ Нет данных для загрузки (ни возвратов, ни товаров).")
+        print("\n✅ Готово! Все данные успешно введены.")
+
+        # Проверка суммы: читаем из 1С и сравниваем с расчётной
+        actual_sum = read_total_from_1c()
+        if actual_sum is not None:
+            if actual_sum == total_sum:
+                print(f"✅ Сумма сошлась: {total_sum}")
+            else:
+                print(f"⚠ Сумма не сошлась! Расчётная: {total_sum}, в 1С: {actual_sum}")
         else:
-            print("\n✅ Готово! Все данные успешно введены.")
+            print("⚠ Не удалось прочитать сумму из поля «Всего» в 1С.")
 
     except FileNotFoundError as e:
         print(f"\n❌ Ошибка: {e}")

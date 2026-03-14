@@ -2,6 +2,7 @@
 Модуль для автоматизации ввода данных в 1С.
 """
 import pyautogui
+from decimal import Decimal
 import ctypes
 import pygetwindow as gw
 import time
@@ -12,6 +13,7 @@ from config import (
     CREATE_NOMENCLATURE_IMAGE,
     REFUND_BUTTON_IMAGE,
     PRODUCT_BUTTON_IMAGE,
+    TOTAL_SUM_IMAGE,
     WINDOW_ACTIVATION_DELAY,
     BETWEEN_ROWS_DELAY,
     NOMENCLATURE_INPUT_DELAY,
@@ -22,6 +24,8 @@ from config import (
     TYPING_INTERVAL,
     IMAGE_CONFIDENCE,
 )
+from data_processor import to_decimal
+
 
 def set_english_layout():
     # Загружаем библиотеку
@@ -97,6 +101,28 @@ def click_product_button():
         raise Exception('Кнопка "Товары" не найдена')
     pyautogui.click(location)
     time.sleep(WINDOW_ACTIVATION_DELAY)
+
+
+def read_total_from_1c():
+    """
+    Кликает по полю «Всего:», считывает число из него (Ctrl+A, Ctrl+C) и возвращает Decimal.
+
+    Returns:
+        Decimal | None: Прочитанная сумма или None, если не удалось найти поле или распарсить
+    """
+    try:
+        location = pyautogui.locateOnScreen(TOTAL_SUM_IMAGE, confidence=IMAGE_CONFIDENCE)
+        if location is None:
+            return None
+        pyautogui.click(location)
+        time.sleep(FIELD_DELAY)
+        pyautogui.hotkey('ctrl', 'a')
+        pyautogui.hotkey('ctrl', 'c')
+        time.sleep(PASTE_AFTER_COPY_DELAY)
+        raw = pyperclip.paste().strip()
+        return to_decimal(raw)
+    except Exception:
+            return None
 
 
 def paste_text(text):
