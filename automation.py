@@ -23,8 +23,19 @@ from config import (
     PASTE_AFTER_COPY_DELAY,
     TYPING_INTERVAL,
     IMAGE_CONFIDENCE,
+    BATCH_CHECK_SIZE,
 )
 from data_processor import to_decimal
+
+# Кэш последнего прочитанного "Всего" из 1С (чтобы не читать дважды подряд)
+_last_read_total = 0
+
+
+def _read_and_cache_total():
+    """Читает сумму из 1С и сохраняет в кэш."""
+    global _last_read_total
+    _last_read_total = read_total_from_1c()
+    return _last_read_total
 
 
 def set_english_layout():
@@ -228,24 +239,54 @@ def fill_product_row(nomenclature, quantity, price, is_first_row=False):
     fill_price(price)
 
 
-def automate_data_entry(product_data):
+def _calc_expected_sum(product_data):
+    """Считает ожидаемую сумму (цена * количество) по списку."""
+    return sum(to_decimal(item[2]) * to_decimal(item[1]) for item in product_data)
+
+
+def with_batch_sum_check(fn):
+    """
+    Декоратор: после каждых BATCH_CHECK_SIZE записей сравнивает
+    ожидаемую сумму с суммой в 1С.
+    """
+
+    def wrapper(product_data, is_refund=False, **kwargs):
+        global _last_read_total
+        cumulative_expected = _last_read_total
+        for i in range(0, len(product_data), BATCH_CHECK_SIZE):
+            chunk = product_data[i : i + BATCH_CHECK_SIZE]
+            fn(chunk, batch_offset=i, **kwargs)
+            chunk_sum = _calc_expected_sum(chunk)
+            cumulative_expected += -chunk_sum if is_refund else chunk_sum
+            actual = _read_and_cache_total()
+            records_count = i + len(chunk)
+            if actual is not None:
+                if actual == cumulative_expected:
+                    print(f"✅ Проверка после {records_count} записей: сумма сошлась ({cumulative_expected})")
+                else:
+                    print(
+                        f"⚠ После {records_count} записей: ожидалось {cumulative_expected}, в 1С: {actual}"
+                    )
+            else:
+                print(f"⚠ Не удалось прочитать сумму из 1С после {records_count} записей")
+
+    return wrapper
+
+
+@with_batch_sum_check
+def automate_data_entry(product_data, batch_offset=0, **kwargs):
     """
     Автоматизирует ввод данных в 1С.
 
     Args:
         product_data (list): Список кортежей (nomenclature, quantity, price, cost)
+        batch_offset (int): Смещение для чанков (используется декоратором)
     """
-    # Переводим на английскую клавиатуру
-    set_english_layout()
-
-    # Активируем окно 1С
-    activate_one_c_window()
-
     # Заполняем строки
     for idx, (nomenclature, quantity, price) in enumerate(product_data):
         fill_product_row(
             nomenclature,
             quantity,
             price,
-            is_first_row=(idx == 0)
+            is_first_row=(batch_offset == 0 and idx == 0),
         )

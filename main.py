@@ -39,7 +39,7 @@ def main():
         if refunds_list:
             print("\n↩ Загружаю возвраты...")
             click_refund_button()
-            automate_data_entry(refunds_list)
+            automate_data_entry(refunds_list, is_refund=True)
 
         # 2. Затем обычные товары — нажать "Товары" и загрузить по базовому алгоритму
         if products_list:
