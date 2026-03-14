@@ -30,7 +30,7 @@ PASTE_AFTER_COPY_DELAY = 0.15
 TYPING_INTERVAL = 0.01
 
 # Уровень уверенности для поиска изображений
-IMAGE_CONFIDENCE = 0.7
+IMAGE_CONFIDENCE = 0.9
 
 # Доля записей для проверки суммы (0.1 = 10%, батч = 10% от общего числа записей)
 BATCH_CHECK_PERCENT = 0.05
