@@ -7,7 +7,12 @@ import glob
 import os
 import re
 
-from config import XLSX_FILE_PATTERN, REFUND_TYPE, RECEIPT_TYPE
+from config import (
+    BULK_PRICE_THRESHOLD,
+    RECEIPT_TYPE,
+    REFUND_TYPE,
+    XLSX_FILE_PATTERN,
+)
 
 # Устанавливаем точность для Decimal
 getcontext().prec = 28
@@ -97,6 +102,22 @@ def _find_calculation_type_column(df):
     return None
 
 
+def normalize_bulk_unit_prices(df):
+    """
+    Строки с ценой выше BULK_PRICE_THRESHOLD и кратной 10 приводятся к штучному виду:
+    quantity × 10, price ÷ 10, чтобы корректно сливались с позициями по той же цене за штуку.
+    """
+    ten = Decimal("10")
+    zero = Decimal("0")
+    mask = (df["price"] > BULK_PRICE_THRESHOLD) & ((df["price"] % ten) == zero)
+    if not mask.any():
+        return df
+    df = df.copy()
+    df.loc[mask, "quantity"] = df.loc[mask, "quantity"] * ten
+    df.loc[mask, "price"] = df.loc[mask, "price"] / ten
+    return df
+
+
 def load_and_prepare_data(file_path):
     """
     Загружает и подготавливает данные из Excel файла.
@@ -150,9 +171,13 @@ def load_and_prepare_data(file_path):
     df["cost"] = df["cost"].apply(to_decimal)
 
     # Количество тоже в Decimal (на случай дробных единиц)
-    df["quantity"] = df["quantity"].apply(lambda x: Decimal(str(x)))
+    df["quantity"] = df["quantity"].apply(
+        lambda x: Decimal("0") if pd.isna(x) else to_decimal(x)
+    )
 
     df["nomenclature"] = df["nomenclature"].apply(clean_spaces)
+
+    df = normalize_bulk_unit_prices(df)
 
     return df
 

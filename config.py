@@ -6,6 +6,9 @@ ONE_C_TITLE = "Бухгалтерия"
 REFUND_TYPE = "Возврат прихода"
 RECEIPT_TYPE = "Приход"
 
+# Если цена строго выше порога и кратна 10: при группировке и вводе «×10 шт.», цена ÷10
+BULK_PRICE_THRESHOLD = 1000
+
 # Путь к Excel файлам
 XLSX_FILE_PATTERN = '~/Desktop/ОФД/*.xlsx'
 
