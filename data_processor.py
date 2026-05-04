@@ -59,13 +59,31 @@ def to_decimal(value):
     """
     if pd.isna(value):
         return Decimal("0")
-    s = re.sub(r"\s+", "", str(value))
-    # Если есть и запятая, и точка — запятая это разделитель тысяч, удаляем
+    if isinstance(value, Decimal):
+        return value
+
+    s = str(value).strip()
+    if not s:
+        return Decimal("0")
+
+    # Удаляем пробелы/неразрывные пробелы и оставляем только "числовые" символы.
+    s = s.replace("\xa0", "")
+    s = re.sub(r"\s+", "", s)
+    s = s.replace("−", "-")
+    s = re.sub(r"[^0-9,.\-]", "", s)
+    if not s or s in {"-", ".", ",", "-.", "-,"}:
+        return Decimal("0")
+
+    # Если есть и точка, и запятая — последний разделитель считаем десятичным.
     if "," in s and "." in s:
-        s = s.replace(",", "")
-    # Если только запятая — это десятичный разделитель
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "")
+            s = s.replace(",", ".")
+        else:
+            s = s.replace(",", "")
     elif "," in s:
         s = s.replace(",", ".")
+
     return Decimal(s)
 
 

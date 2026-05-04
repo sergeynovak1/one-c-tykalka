@@ -37,6 +37,36 @@ from data_processor import to_decimal
 _last_read_total = 0
 
 
+def _send_ctrl_combo_vk(vk_code):
+    """
+    Надежно отправляет сочетание Ctrl+<key> через WinAPI.
+    Используется как fallback, когда pyautogui иногда не передает Home/End.
+    """
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    keyup = 0x0002
+    vk_ctrl = 0x11
+    user32.keybd_event(vk_ctrl, 0, 0, 0)
+    user32.keybd_event(vk_code, 0, 0, 0)
+    user32.keybd_event(vk_code, 0, keyup, 0)
+    user32.keybd_event(vk_ctrl, 0, keyup, 0)
+
+
+def _navigate_table_to_edges():
+    """
+    Переходит к первой и последней строкам таблицы.
+    Сначала пробует pyautogui, затем дублирует ввод через WinAPI.
+    """
+    # Ctrl+Home — переход на первую строку.
+    # pyautogui.hotkey("ctrl", "home")
+    # time.sleep(FIELD_DELAY)
+    _send_ctrl_combo_vk(0x24)  # VK_HOME
+    time.sleep(FIELD_DELAY)
+    # Ctrl+End — переход на последнюю строку.
+    # pyautogui.hotkey("ctrl", "end")
+    # time.sleep(FIELD_DELAY)
+    _send_ctrl_combo_vk(0x23)  # VK_END
+
+
 def _read_and_cache_total():
     """Читает сумму из 1С и сохраняет в кэш."""
     global _last_read_total
@@ -133,11 +163,7 @@ def focus_table_and_navigate_rows():
         raise Exception('Таблица отчёта (table.png) не найдена')
     pyautogui.click(location)
     time.sleep(FIELD_DELAY)
-    # Ctrl+Home — переход на самую первую строку отчёта
-    pyautogui.hotkey('ctrl', 'home')
-    time.sleep(FIELD_DELAY)
-    # Ctrl+End — переход на самую последнюю строку отчёта
-    pyautogui.hotkey('ctrl', 'end')
+    _navigate_table_to_edges()
 
 
 def read_total_from_1c():
