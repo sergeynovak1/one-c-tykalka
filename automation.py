@@ -329,22 +329,24 @@ def _delete_last_n_rows(n):
         pyautogui.press('del')
 
 
-def _count_added_in_last_batch(batch_offset: int, batch_size: int) -> int:
+def _last_batch_expected_vs_actual(batch_offset: int, expected_rows: int) -> tuple[int, int]:
     """
-    Вычисляет, сколько записей из последнего батча фактически добавилось в таблицу.
+    Сравнивает ожидание по файлу с фактом в таблице для последнего батча.
 
-    Копирует содержимое таблицы (Ctrl+A, Ctrl+C) и по количеству строк
-    определяет, сколько записей из батча попало в 1С.
+    Предполагается, что до начала батча в таблице было batch_offset строк
+    (как индекс начала чанка в product_data). Тогда хвост таблицы после батча —
+    это все строки с индекса batch_offset; их число и есть факт.
 
     Args:
-        batch_offset: Количество записей до этого батча (индекс начала чанка).
-        batch_size: Размер батча (сколько записей пытались добавить).
+        batch_offset: Сколько строк в таблице должно было быть до этого батча.
+        expected_rows: Сколько строк должен добавить батч по файлу (len(chunk)).
 
     Returns:
-        Число записей из батча, которые реально есть в таблице (0..batch_size).
+        (expected_rows, actual_rows) — по файлу и по факту в таблице для этого хвоста.
+        Удалять нужно actual_rows последних строк (при дублях actual > expected).
     """
-    if batch_size <= 0:
-        return 0
+    if expected_rows <= 0:
+        return (0, 0)
     focus_table_and_navigate_rows()
     time.sleep(FIELD_DELAY)
     pyautogui.hotkey('ctrl', 'a')
@@ -352,8 +354,8 @@ def _count_added_in_last_batch(batch_offset: int, batch_size: int) -> int:
     time.sleep(PASTE_AFTER_COPY_DELAY)
     raw = pyperclip.paste().strip()
     lines = raw.split('\n')
-    n_added = len(lines) - batch_offset
-    return max(0, min(n_added, batch_size))
+    actual_rows = max(0, len(lines) - batch_offset)
+    return (expected_rows, actual_rows)
 
 
 def with_batch_sum_check(fn):
@@ -382,12 +384,15 @@ def with_batch_sum_check(fn):
                         f"⚠ После {records_count} записей: ожидалось {cumulative_expected}, в 1С: {actual}"
                     )
                     for attempt in range(1, MAX_SUM_RETRY_ATTEMPTS + 1):
-                        n_added = _count_added_in_last_batch(i, len(chunk))
-                        if n_added > 0:
-                            print(f"  Попытка {attempt}/{MAX_SUM_RETRY_ATTEMPTS}: удаляю {n_added} записей и заполняю заново...")
+                        exp_rows, act_rows = _last_batch_expected_vs_actual(i, len(chunk))
+                        if act_rows > 0:
+                            print(
+                                f"  Попытка {attempt}/{MAX_SUM_RETRY_ATTEMPTS}: по файлу ожидалось "
+                                f"{exp_rows} строк, в таблице {act_rows} — удаляю {act_rows} и ввожу заново {exp_rows}..."
+                            )
                             focus_table_and_navigate_rows()
                             time.sleep(FIELD_DELAY)
-                            _delete_last_n_rows(n_added)
+                            _delete_last_n_rows(act_rows)
                             time.sleep(FIELD_DELAY)
                         else:
                             print(f"  Попытка {attempt}/{MAX_SUM_RETRY_ATTEMPTS}: в батч не добавилось ни одной записи, повторяю ввод...")
