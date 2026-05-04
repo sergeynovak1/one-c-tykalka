@@ -63,8 +63,8 @@ def main():
         print(f"\n❌ Ошибка: {e}")
     except ValueError as e:
         print(f"\n❌ Ошибка: {e}")
-    except Exception as e:
-        print(f"\n❌ Произошла ошибка: {e}")
+    # except Exception as e:
+    #     print(f"\n❌ Произошла ошибка: {e}")
 
 
 if __name__ == "__main__":
