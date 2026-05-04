@@ -30,6 +30,7 @@ from config import (
     BATCH_CHECK_MIN,
     MAX_SUM_RETRY_ATTEMPTS,
     ERROR_INJECTION_PERCENT,
+    TOTAL_SUM_VAT_RATE,
 )
 from data_processor import to_decimal
 
@@ -166,12 +167,25 @@ def focus_table_and_navigate_rows():
     _navigate_table_to_edges()
 
 
+def _normalize_read_total(raw: Decimal) -> Decimal:
+    """Если TOTAL_SUM_VAT_RATE > 0, сумма из 1С трактуется как с НДС: делим на (1 + ставка)."""
+    rate = to_decimal(TOTAL_SUM_VAT_RATE)
+    if rate == 0:
+        return raw
+    divisor = Decimal("1") + rate
+    if divisor == 0:
+        return raw
+    return raw / divisor
+
+
 def read_total_from_1c():
     """
     Кликает по полю «Всего:», считывает число из него (Ctrl+A, Ctrl+C) и возвращает Decimal.
 
+    Учёт НДС задаётся в config: TOTAL_SUM_VAT_RATE (0 или, например, 0.22).
+
     Returns:
-        Decimal | None: Прочитанная сумма или None, если не удалось найти поле или распарсить
+        Decimal | None: Сумма для сравнения с расчётом или None, если не удалось найти поле
     """
     location = pyautogui.locateOnScreen(TOTAL_SUM_IMAGE, confidence=IMAGE_CONFIDENCE)
     if location is None:
@@ -182,7 +196,8 @@ def read_total_from_1c():
     pyautogui.hotkey('ctrl', 'c')
     time.sleep(PASTE_AFTER_COPY_DELAY)
     raw = pyperclip.paste().strip()
-    return to_decimal(raw)
+    parsed = to_decimal(raw)
+    return _normalize_read_total(parsed)
 
 
 def paste_text(text):
