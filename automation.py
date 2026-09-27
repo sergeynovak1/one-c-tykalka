@@ -15,8 +15,6 @@ from config import (
     MAX_BROWSER_TAB_SWITCHES,
     ADD_BUTTON_IMAGE,
     CREATE_NOMENCLATURE_IMAGE,
-    REFUND_BUTTON_IMAGE,
-    PRODUCT_BUTTON_IMAGE,
     TOTAL_SUM_IMAGE,
     TABLE_IMAGE,
     WINDOW_ACTIVATION_DELAY,
@@ -203,34 +201,6 @@ def click_add_button(is_first_row):
     pyautogui.click(location)
     if not is_first_row:
         pyautogui.click(location)
-
-
-def click_refund_button():
-    """
-    Нажимает кнопку "Возвраты" в интерфейсе 1С.
-
-    Raises:
-        Exception: Если кнопка не найдена
-    """
-    location = pyautogui.locateOnScreen(REFUND_BUTTON_IMAGE, confidence=IMAGE_CONFIDENCE)
-    if location is None:
-        raise Exception('Кнопка "Возвраты" не найдена')
-    pyautogui.click(location)
-    time.sleep(WINDOW_ACTIVATION_DELAY)
-
-
-def click_product_button():
-    """
-    Нажимает кнопку "Товары" в интерфейсе 1С.
-
-    Raises:
-        Exception: Если кнопка не найдена
-    """
-    location = pyautogui.locateOnScreen(PRODUCT_BUTTON_IMAGE, confidence=IMAGE_CONFIDENCE)
-    if location is None:
-        raise Exception('Кнопка "Товары" не найдена')
-    pyautogui.click(location)
-    time.sleep(WINDOW_ACTIVATION_DELAY)
 
 
 def focus_table_and_navigate_rows():
@@ -462,7 +432,7 @@ def with_batch_sum_check(fn):
     batch_size вычисляется как BATCH_CHECK_PERCENT от общего числа записей, но не меньше BATCH_CHECK_MIN.
     """
 
-    def wrapper(product_data, is_refund=False, **kwargs):
+    def wrapper(product_data, **kwargs):
         global _last_read_total
         cumulative_expected = _last_read_total
         batch_size = max(BATCH_CHECK_MIN, int(len(product_data) * BATCH_CHECK_PERCENT))
@@ -470,7 +440,7 @@ def with_batch_sum_check(fn):
             chunk = product_data[i : i + batch_size]
             fn(chunk, batch_offset=i, **kwargs)
             chunk_sum = _calc_expected_sum(chunk)
-            cumulative_expected += -chunk_sum if is_refund else chunk_sum
+            cumulative_expected += chunk_sum
             actual = _read_and_cache_total()
             records_count = i + len(chunk)
             if actual is not None:

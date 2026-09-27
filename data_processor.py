@@ -10,7 +10,6 @@ import re
 from config import (
     BULK_PRICE_THRESHOLD,
     RECEIPT_TYPE,
-    REFUND_TYPE,
     XLSX_FILE_PATTERN,
 )
 
@@ -139,7 +138,7 @@ def normalize_bulk_unit_prices(df):
 def load_and_prepare_data(file_path):
     """
     Загружает и подготавливает данные из Excel файла.
-    Фильтрует по "Приход" и "Возврат прихода" в столбце "Признак расчета".
+    Фильтрует только «Приход» в столбце «Признак расчета».
 
     Args:
         file_path (str): Путь к Excel файлу
@@ -149,7 +148,6 @@ def load_and_prepare_data(file_path):
     """
     df = pd.read_excel(file_path, dtype={"Наименование": str})
 
-    # Ищем столбец "Признак расчета"
     calc_col = _find_calculation_type_column(df)
     if calc_col is None:
         raise ValueError(
@@ -157,7 +155,6 @@ def load_and_prepare_data(file_path):
             "Проверьте структуру Excel файла."
         )
 
-    # Выбираем нужные столбцы
     df = df[
         [
             "Наименование",
@@ -174,27 +171,22 @@ def load_and_prepare_data(file_path):
         calc_col: "calculation_type",
     })
 
-    # Фильтруем только Приход и Возврат прихода
-    allowed_values = {"Приход", "Возврат прихода"}
     df["calculation_type"] = df["calculation_type"].astype(str).str.strip()
-    df = df[df["calculation_type"].isin(allowed_values)]
+    df = df[df["calculation_type"] == RECEIPT_TYPE]
 
     if df.empty:
         raise ValueError(
-            "После фильтрации по 'Приход' и 'Возврат прихода' данных не осталось."
+            f"После фильтрации по '{RECEIPT_TYPE}' данных не осталось."
         )
 
-    # Преобразование строк с деньгами в Decimal
+    df = df.drop(columns=["calculation_type"])
+
     df["price"] = df["price"].apply(to_decimal)
     df["cost"] = df["cost"].apply(to_decimal)
-
-    # Количество тоже в Decimal (на случай дробных единиц)
     df["quantity"] = df["quantity"].apply(
         lambda x: Decimal("0") if pd.isna(x) else to_decimal(x)
     )
-
     df["nomenclature"] = df["nomenclature"].apply(clean_spaces)
-
     df = normalize_bulk_unit_prices(df)
 
     return df
@@ -202,7 +194,7 @@ def load_and_prepare_data(file_path):
 
 def group_data(df):
     """
-    Группирует данные по номенклатуре, цене и признаку расчёта (Приход/Возврат прихода).
+    Группирует данные по номенклатуре и цене.
 
     Args:
         df (pd.DataFrame): DataFrame с данными
@@ -210,30 +202,26 @@ def group_data(df):
     Returns:
         pd.DataFrame: Сгруппированный DataFrame
     """
-    grouped = (
-        df.groupby(["nomenclature", "price", "calculation_type"], as_index=False)
+    return (
+        df.groupby(["nomenclature", "price"], as_index=False)
         .agg({
             "quantity": "sum",
-            "cost": "sum"
+            "cost": "sum",
         })
     )
-    return grouped
 
 
-def get_total_difference(refunds_list, products_list):
+def get_total_sum(products_list):
     """
-    Вычисляет общую сумму — разницу между суммой (цена*колво) продуктов и возвратов.
+    Вычисляет общую сумму товаров (цена * количество).
 
     Args:
-        refunds_list: список кортежей (nomenclature, quantity, price, cost)
-        products_list: список кортежей (nomenclature, quantity, price, cost)
+        products_list: список кортежей (nomenclature, quantity, price)
 
     Returns:
-        Decimal: products_sum - refunds_sum
+        Decimal: сумма по всем позициям
     """
-    products_sum = sum(to_decimal(item[2]) * to_decimal(item[1]) for item in products_list)
-    refunds_sum = sum(to_decimal(item[2]) * to_decimal(item[1]) for item in refunds_list)
-    return products_sum - refunds_sum
+    return sum(to_decimal(item[2]) * to_decimal(item[1]) for item in products_list)
 
 
 def prepare_result_list(grouped_df):
@@ -246,44 +234,29 @@ def prepare_result_list(grouped_df):
     Returns:
         list: Список кортежей (nomenclature, quantity, price)
     """
-    result = [
+    return [
         (row.nomenclature, str(row.quantity), str(row.price))
         for row in grouped_df.itertuples(index=False)
     ]
-    return result
 
 
 def process_excel_file():
     """
     Основная функция для обработки Excel файла.
-    Разделяет данные на возвраты (Возврат прихода) и обычные товары (Приход).
+    Берёт только товары с признаком «Приход».
 
     Returns:
-        tuple: (refunds_list, products_list) — списки кортежей (nomenclature, quantity, price, cost)
+        list: список кортежей (nomenclature, quantity, price)
     """
-    # Находим файл
     file_path = find_xlsx_file()
     print(f"📁 Обрабатываю файл: {file_path}")
 
-    # Загружаем и подготавливаем данные
     df = load_and_prepare_data(file_path)
-
-    # Группируем данные (по номенклатуре, цене и признаку расчёта)
     grouped = group_data(df)
+    products_list = prepare_result_list(grouped)
 
-    # Разделяем на возвраты и обычные товары
-    refunds_df = grouped[grouped["calculation_type"] == REFUND_TYPE]
-    products_df = grouped[grouped["calculation_type"] == RECEIPT_TYPE]
-
-    refunds_list = prepare_result_list(refunds_df.drop(columns=["calculation_type"]))
-    products_list = prepare_result_list(products_df.drop(columns=["calculation_type"]))
-
-    print(f"\n📊 Возвраты (Возврат прихода): {len(refunds_list)} позиций")
-    for item in refunds_list:
-        print(f"  ↩ {item}")
-
-    print(f"\n📊 Обычные товары (Приход): {len(products_list)} позиций")
+    print(f"\n📊 Товары (Приход): {len(products_list)} позиций")
     for item in products_list:
         print(f"  → {item}")
 
-    return refunds_list, products_list
+    return products_list

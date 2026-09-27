@@ -3,7 +3,7 @@
 Обрабатывает Excel файл и автоматизирует ввод данных в 1С
 (веб-клиент в Яндекс Браузере, документ «Реализация товаров»).
 """
-from data_processor import process_excel_file, get_total_difference
+from data_processor import process_excel_file, get_total_sum
 from automation import (
     automate_data_entry,
     activate_one_c_window,
@@ -18,21 +18,13 @@ def main():
     Загружает товары (Приход) в документ «Реализация товаров» в Яндекс Браузере.
     """
     try:
-        # Обрабатываем Excel файл: разделяем на возвраты и товары
-        refunds_list, products_list = process_excel_file()
+        products_list = process_excel_file()
 
         if not products_list:
             print("\n⚠ Нет товаров (Приход) для загрузки.")
             return
 
-        if refunds_list:
-            print(
-                f"\n⚠ Найдено возвратов: {len(refunds_list)} — "
-                f"в «Реализацию товаров» не загружаются, пропускаю."
-            )
-
-        # Для реализации сверяем сумму только по товарам (Приход)
-        total_sum = get_total_difference([], products_list)
+        total_sum = get_total_sum(products_list)
         print(f"\n💰 Общая сумма (товары): {total_sum}")
 
         print("\n🤖 Разворачиваю Яндекс Браузер...")

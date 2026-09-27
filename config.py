@@ -8,7 +8,6 @@ ONE_C_TAB_MARKERS = ("1С:Предприятие", "Бух Фаворит", "1cf
 # Сколько раз пробовать Ctrl+Tab в поисках вкладки 1С
 MAX_BROWSER_TAB_SWITCHES = 15
 
-REFUND_TYPE = "Возврат прихода"
 RECEIPT_TYPE = "Приход"
 
 # Если цена строго выше порога и кратна 10: при группировке и вводе «×10 шт.», цена ÷10
@@ -20,8 +19,6 @@ XLSX_FILE_PATTERN = '~/Desktop/ОФД/*.xlsx'
 # Пути к изображениям для автоматизации
 ADD_BUTTON_IMAGE = 'C:/1c_images/add_button.PNG'
 CREATE_NOMENCLATURE_IMAGE = 'C:/1c_images/create_nomenclature.PNG'
-REFUND_BUTTON_IMAGE = 'C:/1c_images/refund_button.PNG'
-PRODUCT_BUTTON_IMAGE = 'C:/1c_images/product_button.PNG'
 TOTAL_SUM_IMAGE = 'C:/1c_images/total_sum.PNG'
 TABLE_IMAGE = 'C:/1c_images/table.PNG'
 
