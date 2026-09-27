@@ -10,7 +10,9 @@ import pygetwindow as gw
 import time
 import pyperclip
 from config import (
-    ONE_C_TITLE,
+    BROWSER_TITLE,
+    ONE_C_TAB_MARKERS,
+    MAX_BROWSER_TAB_SWITCHES,
     ADD_BUTTON_IMAGE,
     CREATE_NOMENCLATURE_IMAGE,
     REFUND_BUTTON_IMAGE,
@@ -18,6 +20,7 @@ from config import (
     TOTAL_SUM_IMAGE,
     TABLE_IMAGE,
     WINDOW_ACTIVATION_DELAY,
+    BROWSER_TAB_SWITCH_DELAY,
     BETWEEN_ROWS_DELAY,
     NOMENCLATURE_INPUT_DELAY,
     AFTER_CREATE_DELAY,
@@ -89,23 +92,102 @@ def set_english_layout():
     user32.PostMessageW(hwnd, 0x50, 1, kl)
 
 
-def activate_one_c_window():
-    """
-    Активирует окно 1С по заголовку.
+def _force_restore_and_foreground(window):
+    """Разворачивает свёрнутое окно на весь экран и выводит его на передний план."""
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    hwnd = int(window._hWnd)
+    sw_restore = 9
+    sw_maximize = 3
 
-    Raises:
-        Exception: Если окно не найдено
-    """
-    windows = gw.getWindowsWithTitle(ONE_C_TITLE)
-    if windows:
-        window = windows[0]
-        if window.isMinimized:
-            window.restore()
-        window.activate()
-        time.sleep(WINDOW_ACTIVATION_DELAY)
+    user32.ShowWindow(hwnd, sw_restore)
+    if window.isMinimized:
+        window.restore()
+
+    user32.ShowWindow(hwnd, sw_maximize)
+    try:
+        window.maximize()
+    except Exception:
+        pass
+
+    foreground = user32.GetForegroundWindow()
+    if foreground == hwnd:
         return
 
-    raise Exception(f"Окно с заголовком содержащим '{ONE_C_TITLE}' не найдено или не может быть активировано")
+    current_thread = user32.GetWindowThreadProcessId(foreground, 0)
+    target_thread = user32.GetWindowThreadProcessId(hwnd, 0)
+    my_thread = kernel32.GetCurrentThreadId()
+
+    user32.AttachThreadInput(my_thread, current_thread, True)
+    user32.AttachThreadInput(my_thread, target_thread, True)
+    user32.BringWindowToTop(hwnd)
+    user32.SetForegroundWindow(hwnd)
+    user32.AttachThreadInput(my_thread, target_thread, False)
+    user32.AttachThreadInput(my_thread, current_thread, False)
+
+    try:
+        window.activate()
+    except Exception:
+        pass
+
+
+def _find_yandex_browser_window():
+    """
+    Ищет окно Яндекс Браузера (в т.ч. свёрнутое).
+    Предпочитает окно, в заголовке которого уже видна вкладка 1С.
+    """
+    windows = [w for w in gw.getAllWindows() if w.title and BROWSER_TITLE in w.title]
+    if not windows:
+        raise Exception(
+            f"Яндекс Браузер не найден (заголовок должен содержать '{BROWSER_TITLE}'). "
+            f"Откройте браузер со вкладкой 1С и сверните его перед запуском."
+        )
+
+    for marker in ONE_C_TAB_MARKERS:
+        for window in windows:
+            if marker in window.title:
+                return window
+    return windows[0]
+
+
+def _window_has_one_c_tab(window):
+    title = window.title or ""
+    return any(marker in title for marker in ONE_C_TAB_MARKERS)
+
+
+def _switch_to_one_c_browser_tab(window):
+    """
+    Переключает вкладки браузера (Ctrl+Tab), пока в заголовке не появится 1С.
+    """
+    if _window_has_one_c_tab(window):
+        return
+
+    for _ in range(MAX_BROWSER_TAB_SWITCHES):
+        pyautogui.hotkey("ctrl", "tab")
+        time.sleep(BROWSER_TAB_SWITCH_DELAY)
+        # pygetwindow обновляет title у того же объекта
+        if _window_has_one_c_tab(window):
+            return
+
+    raise Exception(
+        "Во вкладках Яндекс Браузера не найдена вкладка 1С "
+        f"(ожидались маркеры: {', '.join(ONE_C_TAB_MARKERS)})"
+    )
+
+
+def activate_one_c_window():
+    """
+    Разворачивает свёрнутый Яндекс Браузер и активирует вкладку с 1С.
+    Нужный документ внутри 1С уже должен быть открыт.
+
+    Raises:
+        Exception: Если браузер или вкладка 1С не найдены
+    """
+    window = _find_yandex_browser_window()
+    _force_restore_and_foreground(window)
+    time.sleep(WINDOW_ACTIVATION_DELAY)
+    _switch_to_one_c_browser_tab(window)
+    time.sleep(BROWSER_TAB_SWITCH_DELAY)
 
 
 def click_add_button(is_first_row):

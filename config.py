@@ -1,7 +1,12 @@
 """
 Конфигурационные константы.
 """
-ONE_C_TITLE = "Бухгалтерия"
+# Яндекс Браузер (окно может быть свёрнуто на момент запуска)
+BROWSER_TITLE = "Яндекс"
+# Признаки вкладки с веб-клиентом 1С в заголовке окна браузера
+ONE_C_TAB_MARKERS = ("1С:Предприятие", "Бух Фаворит", "1cfresh")
+# Сколько раз пробовать Ctrl+Tab в поисках вкладки 1С
+MAX_BROWSER_TAB_SWITCHES = 15
 
 REFUND_TYPE = "Возврат прихода"
 RECEIPT_TYPE = "Приход"
@@ -22,6 +27,7 @@ TABLE_IMAGE = 'C:/1c_images/table.PNG'
 
 # Задержки (в секундах)
 WINDOW_ACTIVATION_DELAY = 0.7
+BROWSER_TAB_SWITCH_DELAY = 0.35
 BETWEEN_ROWS_DELAY = 0.05
 NOMENCLATURE_INPUT_DELAY = 0.3
 AFTER_CREATE_DELAY = 0.3
