@@ -1,5 +1,6 @@
 """
 Модуль для обработки Excel файлов и подготовки данных.
+Ожидается отчёт «Анализ контрагентов» (лист «Документ»).
 """
 import pandas as pd
 from decimal import Decimal, getcontext
@@ -8,18 +9,23 @@ import os
 import re
 
 from config import (
-    BULK_PRICE_THRESHOLD,
-    RECEIPT_TYPE,
     XLSX_FILE_PATTERN,
 )
 
 # Устанавливаем точность для Decimal
 getcontext().prec = 28
 
+# Лист и колонки отчёта «Анализ контрагентов» (0-based после skiprows заголовка)
+DOCUMENT_SHEET_NAME = "Документ"
+HEADER_ROWS = 3
+COL_NOMENCLATURE = 1   # Товар
+COL_QUANTITY = 10      # Расход → Количество
+COL_PRICE = 16         # Расход → Отпускные суммы → Цена
+
 
 def find_xlsx_file():
     """
-    Находит единственный XLSX файл в текущей директории.
+    Находит единственный XLSX файл по шаблону из config.
 
     Returns:
         str: Путь к найденному файлу
@@ -32,7 +38,7 @@ def find_xlsx_file():
     xlsx_files = glob.glob(path)
 
     if not xlsx_files:
-        raise FileNotFoundError("В текущей папке нет XLSX файлов")
+        raise FileNotFoundError(f"Не найдено XLSX файлов по шаблону: {XLSX_FILE_PATTERN}")
 
     if len(xlsx_files) > 1:
         file_list = "\n".join([f"  - {f}" for f in xlsx_files])
@@ -96,105 +102,63 @@ def clean_spaces(text, max_length=100):
     if pd.isna(text):
         return ""
 
-    # Нормализация пробелов
     cleaned = re.sub(r"\s+", " ", str(text)).strip()
 
-    # Обрезка с ' ...'
     if len(cleaned) > max_length:
         return cleaned[:max_length - 4] + " ..."
 
     return cleaned
 
 
-def _find_calculation_type_column(df):
-    """
-    Находит столбец, в названии которого есть "Признак расчета".
-
-    Returns:
-        str: Имя столбца или None
-    """
-    for col in df.columns:
-        if "Признак расчета" in str(col):
-            return col
-    return None
-
-
-def normalize_bulk_unit_prices(df):
-    """
-    Строки с ценой выше BULK_PRICE_THRESHOLD и кратной 10 приводятся к штучному виду:
-    quantity × 10, price ÷ 10, чтобы корректно сливались с позициями по той же цене за штуку.
-    """
-    ten = Decimal("10")
-    zero = Decimal("0")
-    mask = (df["price"] > BULK_PRICE_THRESHOLD) & ((df["price"] % ten) == zero)
-    if not mask.any():
-        return df
-    df = df.copy()
-    df.loc[mask, "quantity"] = df.loc[mask, "quantity"] * ten
-    df.loc[mask, "price"] = df.loc[mask, "price"] / ten
-    return df
-
-
 def load_and_prepare_data(file_path):
     """
-    Загружает и подготавливает данные из Excel файла.
-    Фильтрует только «Приход» в столбце «Признак расчета».
+    Загружает лист «Документ» из «Анализа контрагентов».
+    Берёт товар, количество расхода и отпускную цену.
 
     Args:
         file_path (str): Путь к Excel файлу
 
     Returns:
-        pd.DataFrame: Подготовленный DataFrame
+        pd.DataFrame: колонки nomenclature, quantity, price
     """
-    df = pd.read_excel(file_path, dtype={"Наименование": str})
+    df = pd.read_excel(
+        file_path,
+        sheet_name=DOCUMENT_SHEET_NAME,
+        header=None,
+        skiprows=HEADER_ROWS,
+        dtype={COL_NOMENCLATURE: str},
+    )
 
-    calc_col = _find_calculation_type_column(df)
-    if calc_col is None:
+    if df.shape[1] <= COL_PRICE:
         raise ValueError(
-            "Не найден столбец с 'Признак расчета' в названии. "
-            "Проверьте структуру Excel файла."
+            f"В листе '{DOCUMENT_SHEET_NAME}' ожидалось минимум {COL_PRICE + 1} колонок, "
+            f"получено {df.shape[1]}."
         )
 
-    df = df[
-        [
-            "Наименование",
-            "Цена товара",
-            "Количество единиц измерения в чеке",
-            "Сумма товара",
-            calc_col,
-        ]
-    ].rename(columns={
-        "Наименование": "nomenclature",
-        "Цена товара": "price",
-        "Количество единиц измерения в чеке": "quantity",
-        "Сумма товара": "cost",
-        calc_col: "calculation_type",
+    df = pd.DataFrame({
+        "nomenclature": df.iloc[:, COL_NOMENCLATURE],
+        "quantity": df.iloc[:, COL_QUANTITY],
+        "price": df.iloc[:, COL_PRICE],
     })
 
-    df["calculation_type"] = df["calculation_type"].astype(str).str.strip()
-    df = df[df["calculation_type"] == RECEIPT_TYPE]
+    df["nomenclature"] = df["nomenclature"].apply(clean_spaces)
+    df["quantity"] = df["quantity"].apply(to_decimal)
+    df["price"] = df["price"].apply(to_decimal)
+
+    # Пропускаем пустые строки и позиции без расхода
+    df = df[(df["nomenclature"] != "") & (df["quantity"] != 0)]
 
     if df.empty:
         raise ValueError(
-            f"После фильтрации по '{RECEIPT_TYPE}' данных не осталось."
+            "После чтения «Анализа контрагентов» не осталось позиций с расходом."
         )
 
-    df = df.drop(columns=["calculation_type"])
-
-    df["price"] = df["price"].apply(to_decimal)
-    df["cost"] = df["cost"].apply(to_decimal)
-    df["quantity"] = df["quantity"].apply(
-        lambda x: Decimal("0") if pd.isna(x) else to_decimal(x)
-    )
-    df["nomenclature"] = df["nomenclature"].apply(clean_spaces)
-    df = normalize_bulk_unit_prices(df)
-
-    return df
+    return df.reset_index(drop=True)
 
 
 def group_data(df):
     """
-    Группирует данные по номенклатуре и цене.
+    Группирует данные по номенклатуре и отпускной цене.
 
     Args:
         df (pd.DataFrame): DataFrame с данными
@@ -204,10 +168,7 @@ def group_data(df):
     """
     return (
         df.groupby(["nomenclature", "price"], as_index=False)
-        .agg({
-            "quantity": "sum",
-            "cost": "sum",
-        })
+        .agg({"quantity": "sum"})
     )
 
 
@@ -224,6 +185,15 @@ def get_total_sum(products_list):
     return sum(to_decimal(item[2]) * to_decimal(item[1]) for item in products_list)
 
 
+def format_for_input(value):
+    """Форматирует число для ввода в 1С без лишних нулей (3.0 → 3, 18.30 → 18.3)."""
+    d = to_decimal(value)
+    s = f"{d:f}"
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return s or "0"
+
+
 def prepare_result_list(grouped_df):
     """
     Подготавливает список кортежей в нужном формате.
@@ -235,15 +205,15 @@ def prepare_result_list(grouped_df):
         list: Список кортежей (nomenclature, quantity, price)
     """
     return [
-        (row.nomenclature, str(row.quantity), str(row.price))
+        (row.nomenclature, format_for_input(row.quantity), format_for_input(row.price))
         for row in grouped_df.itertuples(index=False)
     ]
 
 
 def process_excel_file():
     """
-    Основная функция для обработки Excel файла.
-    Берёт только товары с признаком «Приход».
+    Основная функция для обработки «Анализа контрагентов».
+    Берёт позиции расхода с отпускной ценой.
 
     Returns:
         list: список кортежей (nomenclature, quantity, price)
@@ -255,7 +225,7 @@ def process_excel_file():
     grouped = group_data(df)
     products_list = prepare_result_list(grouped)
 
-    print(f"\n📊 Товары (Приход): {len(products_list)} позиций")
+    print(f"\n📊 Товары (расход): {len(products_list)} позиций")
     for item in products_list:
         print(f"  → {item}")
 

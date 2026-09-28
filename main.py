@@ -15,13 +15,13 @@ from automation import (
 def main():
     """
     Главная функция приложения.
-    Загружает товары (Приход) в документ «Реализация товаров» в Яндекс Браузере.
+    Загружает товары в документ «Реализация товаров» в Яндекс Браузере.
     """
     try:
         products_list = process_excel_file()
 
         if not products_list:
-            print("\n⚠ Нет товаров (Приход) для загрузки.")
+            print("\n⚠ Нет товаров для загрузки.")
             return
 
         total_sum = get_total_sum(products_list)

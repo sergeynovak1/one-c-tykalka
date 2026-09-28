@@ -2,6 +2,7 @@
 Модуль для автоматизации ввода данных в 1С.
 """
 import sys
+import os
 import pyautogui
 import random
 from decimal import Decimal
@@ -14,17 +15,20 @@ from config import (
     ONE_C_TAB_MARKERS,
     MAX_BROWSER_TAB_SWITCHES,
     ADD_BUTTON_IMAGE,
-    CREATE_NOMENCLATURE_IMAGE,
+    MISSING_NOMENCLATURE_IMAGE,
     TOTAL_SUM_IMAGE,
     TABLE_IMAGE,
+    BUSY_IMAGE,
     WINDOW_ACTIVATION_DELAY,
     BROWSER_TAB_SWITCH_DELAY,
     BETWEEN_ROWS_DELAY,
     NOMENCLATURE_INPUT_DELAY,
-    AFTER_CREATE_DELAY,
-    AFTER_CTRL_ENTER_DELAY,
     FIELD_DELAY,
     PASTE_AFTER_COPY_DELAY,
+    TOTAL_SUM_BEFORE_COPY_DELAY,
+    BUSY_POLL_INTERVAL,
+    BUSY_TIMEOUT,
+    BUSY_STABLE_POLLS,
     TYPING_INTERVAL,
     IMAGE_CONFIDENCE,
     BATCH_CHECK_PERCENT,
@@ -32,11 +36,88 @@ from config import (
     MAX_SUM_RETRY_ATTEMPTS,
     ERROR_INJECTION_PERCENT,
     TOTAL_SUM_VAT_RATE,
+    NOMENCLATURE_ENTERS,
+    QUANTITY_TO_PRICE_TABS,
 )
 from data_processor import to_decimal
 
 # Кэш последнего прочитанного "Всего" из 1С (чтобы не читать дважды подряд)
 _last_read_total = 0
+
+# WinAPI константы курсора ожидания
+_IDC_WAIT = 32514
+_IDC_APPSTARTING = 32650
+
+
+def _cursor_is_busy():
+    """True, если системный курсор — песочные часы / appstarting."""
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+
+    class POINT(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+    class CURSORINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", ctypes.c_uint),
+            ("flags", ctypes.c_uint),
+            ("hCursor", ctypes.c_void_p),
+            ("ptScreenPos", POINT),
+        ]
+
+    info = CURSORINFO()
+    info.cbSize = ctypes.sizeof(CURSORINFO)
+    if not user32.GetCursorInfo(ctypes.byref(info)):
+        return False
+
+    wait_cursor = user32.LoadCursorW(None, _IDC_WAIT)
+    appstarting_cursor = user32.LoadCursorW(None, _IDC_APPSTARTING)
+    return info.hCursor in (wait_cursor, appstarting_cursor)
+
+
+def _busy_image_visible():
+    """True, если на экране виден индикатор загрузки (busy.PNG)."""
+    if not BUSY_IMAGE or not os.path.isfile(BUSY_IMAGE):
+        return False
+    try:
+        return pyautogui.locateOnScreen(BUSY_IMAGE, confidence=IMAGE_CONFIDENCE) is not None
+    except pyautogui.ImageNotFoundException:
+        return False
+
+
+def is_ui_busy():
+    """Браузер/1С заняты: курсор ожидания или картинка pending/загрузки."""
+    return _cursor_is_busy() or _busy_image_visible()
+
+
+def wait_while_busy(timeout=None, reason=""):
+    """
+    Ждёт, пока UI не перестанет быть «занятым» (pending/загрузка).
+    Считает готовым после нескольких подряд опросов без busy.
+    """
+    timeout = BUSY_TIMEOUT if timeout is None else timeout
+    deadline = time.time() + timeout
+    stable = 0
+    announced = False
+
+    while time.time() < deadline:
+        if is_ui_busy():
+            stable = 0
+            if not announced:
+                suffix = f" ({reason})" if reason else ""
+                print(f"⏳ Жду, пока 1С/браузер загрузится{suffix}...")
+                announced = True
+            time.sleep(BUSY_POLL_INTERVAL)
+            continue
+
+        stable += 1
+        if stable >= BUSY_STABLE_POLLS:
+            return
+        time.sleep(BUSY_POLL_INTERVAL)
+
+    raise TimeoutError(
+        f"1С/браузер всё ещё заняты после {timeout} с"
+        + (f" ({reason})" if reason else "")
+    )
 
 
 def _send_ctrl_combo_vk(vk_code):
@@ -186,6 +267,7 @@ def activate_one_c_window():
     time.sleep(WINDOW_ACTIVATION_DELAY)
     _switch_to_one_c_browser_tab(window)
     time.sleep(BROWSER_TAB_SWITCH_DELAY)
+    wait_while_busy(reason="после открытия браузера")
 
 
 def click_add_button(is_first_row):
@@ -198,9 +280,11 @@ def click_add_button(is_first_row):
     location = pyautogui.locateOnScreen(ADD_BUTTON_IMAGE, confidence=IMAGE_CONFIDENCE)
     if location is None:
         raise Exception('Кнопка "Добавить" не найдена')
+    wait_while_busy(reason="перед «Добавить»")
     pyautogui.click(location)
     if not is_first_row:
         pyautogui.click(location)
+    wait_while_busy(reason="после «Добавить»")
 
 
 def focus_table_and_navigate_rows():
@@ -232,19 +316,23 @@ def _normalize_read_total(raw: Decimal) -> Decimal:
 
 def read_total_from_1c():
     """
-    Кликает по полю «Всего:», считывает число из него (Ctrl+A, Ctrl+C) и возвращает Decimal.
+    Кликает по полю «Всего:» (клик → пауза → два даблклика), копирует число (Ctrl+C).
 
     Учёт НДС задаётся в config: TOTAL_SUM_VAT_RATE (0 или, например, 0.22).
 
     Returns:
         Decimal | None: Сумма для сравнения с расчётом или None, если не удалось найти поле
     """
+    wait_while_busy(reason="перед чтением «Всего»")
     location = pyautogui.locateOnScreen(TOTAL_SUM_IMAGE, confidence=IMAGE_CONFIDENCE)
     if location is None:
         return None
     pyautogui.click(location)
-    time.sleep(FIELD_DELAY)
-    pyautogui.hotkey('ctrl', 'a')
+    time.sleep(TOTAL_SUM_BEFORE_COPY_DELAY)
+    for _ in range(3):
+        pyautogui.doubleClick(location)
+        time.sleep(FIELD_DELAY)
+    time.sleep(TOTAL_SUM_BEFORE_COPY_DELAY)
     pyautogui.hotkey('ctrl', 'c')
     time.sleep(PASTE_AFTER_COPY_DELAY)
     raw = pyperclip.paste().strip()
@@ -261,11 +349,28 @@ def paste_text(text):
     pyautogui.hotkey('ctrl', 'v')
 
 
+def _ensure_nomenclature_exists(nomenclature):
+    """
+    Если в выпадающем списке есть пункт создания — номенклатуры нет в базе.
+    Raises:
+        ValueError: с именем отсутствующей номенклатуры
+    """
+    try:
+        found = pyautogui.locateOnScreen(
+            MISSING_NOMENCLATURE_IMAGE,
+            confidence=IMAGE_CONFIDENCE,
+        )
+    except pyautogui.ImageNotFoundException:
+        found = None
+    if found is not None:
+        raise ValueError(f"Номенклатура не найдена в 1С: {nomenclature}")
+
+
 def fill_nomenclature(nomenclature):
     """
-    Заполняет поле номенклатуры.
-    Сначала очищает поле (Del), вставляет текст через буфер.
-    После ввода проверяет содержимое поля; при несовпадении очищает и вставляет ещё раз.
+    Заполняет поле номенклатуры (создание новой не выполняется).
+    Если номенклатуры нет в базе — ошибка с её именем.
+    Затем Enter переходит к количеству.
 
     Args:
         nomenclature (str): Наименование номенклатуры
@@ -274,6 +379,8 @@ def fill_nomenclature(nomenclature):
     pyautogui.press('del')
     paste_text(expected)
     time.sleep(NOMENCLATURE_INPUT_DELAY)
+
+    _ensure_nomenclature_exists(expected)
 
     # Проверка: копируем содержимое поля и сравниваем с ожидаемым
     pyautogui.hotkey('ctrl', 'a')
@@ -284,42 +391,29 @@ def fill_nomenclature(nomenclature):
         pyautogui.press('del')
         paste_text(expected)
         time.sleep(NOMENCLATURE_INPUT_DELAY)
+        _ensure_nomenclature_exists(expected)
 
-    # Проверяем, нужно ли создать новую номенклатуру
-    try:
-        create_window = pyautogui.locateOnScreen(
-            CREATE_NOMENCLATURE_IMAGE,
-            confidence=IMAGE_CONFIDENCE
-        )
-        pyautogui.click(create_window)
-        time.sleep(AFTER_CREATE_DELAY)
-        pyautogui.hotkey('ctrl', 'enter')
-        time.sleep(AFTER_CTRL_ENTER_DELAY)
-    except pyautogui.ImageNotFoundException:
-        pass
-
-    pyautogui.press('enter')
-    pyautogui.press('enter')
-    time.sleep(FIELD_DELAY)
+    for _ in range(NOMENCLATURE_ENTERS):
+        pyautogui.press('enter')
+        time.sleep(FIELD_DELAY)
 
 
 def fill_quantity(quantity):
     """
-    Заполняет поле количества.
+    Заполняет поле количества и Tab'ом переходит к цене.
 
     Args:
         quantity (str): Количество
     """
     pyautogui.write(quantity, interval=TYPING_INTERVAL)
-    pyautogui.hotkey('ctrl', 'enter')
-    pyautogui.press('enter')
+    for _ in range(QUANTITY_TO_PRICE_TABS):
+        pyautogui.press('tab')
+        time.sleep(FIELD_DELAY)
 
 
 def fill_price(price):
     """
-    Заполняет поле цены.
-    Сначала выделяет всё содержимое (Ctrl+A), затем ввод заменяет старую цену.
-    После ввода проверяет содержимое поля; при несовпадении перезаписывает ещё раз.
+    Заполняет поле цены. Дальше строка не ведётся — следующая начнётся с «Добавить».
 
     Args:
         price (str): Цена
@@ -336,8 +430,6 @@ def fill_price(price):
     if actual != expected:
         pyautogui.hotkey('ctrl', 'a')
         pyautogui.write(expected, interval=TYPING_INTERVAL)
-
-    pyautogui.press('enter')
 
 
 def fill_product_row(nomenclature, quantity, price, is_first_row=False):

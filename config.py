@@ -8,35 +8,44 @@ ONE_C_TAB_MARKERS = ("1С:Предприятие", "Бух Фаворит", "1cf
 # Сколько раз пробовать Ctrl+Tab в поисках вкладки 1С
 MAX_BROWSER_TAB_SWITCHES = 15
 
-RECEIPT_TYPE = "Приход"
+# Путь к Excel: отчёт «Анализ контрагентов»
+XLSX_FILE_PATTERN = 'C:/Users/novak/PycharmProjects/one-c-tykalka/Анализ контрагентов с 01.09.2026 по 15.09.2026 (1).xlsx'
 
-# Если цена строго выше порога и кратна 10: при группировке и вводе «×10 шт.», цена ÷10
-BULK_PRICE_THRESHOLD = 1000
-
-# Путь к Excel файлам
-XLSX_FILE_PATTERN = '~/Desktop/ОФД/*.xlsx'
+# Навигация по строке «Реализация товаров»:
+# Добавить → номенклатура → Enter → количество → Tab → цена → (снова Добавить)
+NOMENCLATURE_ENTERS = 1
+QUANTITY_TO_PRICE_TABS = 1
 
 # Пути к изображениям для автоматизации
-ADD_BUTTON_IMAGE = 'C:/1c_images/add_button.PNG'
-CREATE_NOMENCLATURE_IMAGE = 'C:/1c_images/create_nomenclature.PNG'
-TOTAL_SUM_IMAGE = 'C:/1c_images/total_sum.PNG'
-TABLE_IMAGE = 'C:/1c_images/table.PNG'
+ADD_BUTTON_IMAGE = 'C:/Users/novak/PycharmProjects/one-c-tykalka/1c_images/add_button.PNG'
+# Пункт «создать» в выпадающем списке = номенклатуры нет в базе
+MISSING_NOMENCLATURE_IMAGE = 'C:/Users/novak/PycharmProjects/one-c-tykalka/1c_images/create_nomenclature.PNG'
+TOTAL_SUM_IMAGE = 'C:/Users/novak/PycharmProjects/one-c-tykalka/1c_images/total_sum.PNG'
+TABLE_IMAGE = 'C:/Users/novak/PycharmProjects/one-c-tykalka/1c_images/table.PNG'
+# Индикатор загрузки/pending 1С (если файла нет — ждём только по курсору)
+BUSY_IMAGE = 'C:/Users/novak/PycharmProjects/one-c-tykalka/1c_images/busy.PNG'
 
 # Задержки (в секундах)
 WINDOW_ACTIVATION_DELAY = 0.7
 BROWSER_TAB_SWITCH_DELAY = 0.35
 BETWEEN_ROWS_DELAY = 0.05
 NOMENCLATURE_INPUT_DELAY = 0.3
-AFTER_CREATE_DELAY = 0.3
-AFTER_CTRL_ENTER_DELAY = 0.5
 FIELD_DELAY = 0.03
 PASTE_AFTER_COPY_DELAY = 0.15
+# Пауза после кликов по «Всего:», до Ctrl+C (иначе копируется не то поле)
+TOTAL_SUM_BEFORE_COPY_DELAY = 0.5
+
+# Ожидание, пока браузер/1С «подтупливает»
+BUSY_POLL_INTERVAL = 0.2
+BUSY_TIMEOUT = 60
+# Сколько подряд опросов без «занято», чтобы считать UI готовым
+BUSY_STABLE_POLLS = 3
 
 # Интервалы ввода
 TYPING_INTERVAL = 0.01
 
 # Уровень уверенности для поиска изображений
-IMAGE_CONFIDENCE = 0.8
+IMAGE_CONFIDENCE = 0.7
 
 # Доля записей для проверки суммы (0.1 = 10%, батч = 10% от общего числа записей)
 BATCH_CHECK_PERCENT = 0.05
