@@ -3,6 +3,7 @@
 """
 import sys
 import os
+import re
 import pyautogui
 import random
 from decimal import Decimal
@@ -26,6 +27,9 @@ from config import (
     FIELD_DELAY,
     PASTE_AFTER_COPY_DELAY,
     TOTAL_SUM_BEFORE_COPY_DELAY,
+    TOTAL_SUM_READ_RETRIES,
+    COPY_RETRY_DELAY,
+    TOTAL_SUM_CLICK_X_RATIO,
     BUSY_POLL_INTERVAL,
     BUSY_TIMEOUT,
     BUSY_STABLE_POLLS,
@@ -43,6 +47,10 @@ from data_processor import to_decimal
 
 # Кэш последнего прочитанного "Всего" из 1С (чтобы не читать дважды подряд)
 _last_read_total = 0
+# Пропущенные позиции (номенклатуры нет в 1С) — не входят в ожидаемую сумму
+_skipped_products = []
+# Пропуски внутри текущего вызова automate_data_entry (одного чанка)
+_chunk_skipped = []
 
 # WinAPI константы курсора ожидания
 _IDC_WAIT = 32514
@@ -134,6 +142,44 @@ def _send_ctrl_combo_vk(vk_code):
     user32.keybd_event(vk_ctrl, 0, keyup, 0)
 
 
+def _as_money(value) -> Decimal:
+    """Округление до копеек — как в поле «Всего» 1С."""
+    return to_decimal(value).quantize(Decimal("0.01"))
+
+
+def _copy_to_clipboard(select_all=False):
+    """
+    Ctrl+A (опционально) + Ctrl+C через pyautogui, с повторами.
+    Returns:
+        str | None: текст из буфера или None, если копирование не сработало
+    """
+    for attempt in range(1, TOTAL_SUM_READ_RETRIES + 1):
+        before = str(pyperclip.paste() or "")
+        if select_all:
+            pyautogui.hotkey('ctrl', 'a')
+            time.sleep(FIELD_DELAY)
+        pyautogui.hotkey('ctrl', 'c')
+        time.sleep(COPY_RETRY_DELAY)
+        text = str(pyperclip.paste() or "").strip()
+        # Успех: буфер изменился или похож на число (не остался старый мусор)
+        if text and (text != before.strip() or _looks_like_amount(text)):
+            return text
+        print(f"⚠ Ctrl+C не скопировал данные (попытка {attempt}/{TOTAL_SUM_READ_RETRIES})")
+        time.sleep(COPY_RETRY_DELAY)
+    return None
+
+
+def _looks_like_amount(text: str) -> bool:
+    """Грубая проверка, что в буфере денежная сумма, а не маркер/мусор."""
+    s = text.strip().replace("\xa0", "").replace(" ", "")
+    if not s:
+        return False
+    # допускаем 1234,56 / 1234.56 / -12
+    return bool(re.fullmatch(r"-?\d+[.,]?\d*", s)) or bool(
+        re.fullmatch(r"-?\d{1,3}([ .,]\d{3})+([.,]\d+)?", s)
+    )
+
+
 def _navigate_table_to_edges():
     """
     Переходит к первой и последней строкам таблицы.
@@ -150,11 +196,12 @@ def _navigate_table_to_edges():
     _send_ctrl_combo_vk(0x23)  # VK_END
 
 
-def _read_and_cache_total():
+def _read_and_cache_total(min_plausible=None):
     """Читает сумму из 1С и сохраняет в кэш."""
     global _last_read_total
-    _last_read_total = read_total_from_1c() or 0
-    return _last_read_total
+    value = read_total_from_1c(min_plausible=min_plausible)
+    _last_read_total = value if value is not None else 0
+    return value
 
 
 def set_english_layout():
@@ -314,47 +361,73 @@ def _normalize_read_total(raw: Decimal) -> Decimal:
     return raw / divisor
 
 
-def read_total_from_1c():
-    """
-    Кликает по полю «Всего:» (клик → пауза → два даблклика), копирует число (Ctrl+C).
+def _click_total_sum_field(location):
+    """Кликает в поле суммы справа от лейбла «Всего:», не по самому тексту."""
+    x = location.left + int(location.width * TOTAL_SUM_CLICK_X_RATIO)
+    y = location.top + location.height // 2
+    pyautogui.click(x, y)
+    return x, y
 
-    Учёт НДС задаётся в config: TOTAL_SUM_VAT_RATE (0 или, например, 0.22).
+
+def read_total_from_1c(min_plausible=None):
+    """
+    Кликает по полю «Всего:», Ctrl+A, Ctrl+C (с повторами).
+    Сравнивает с 1С по копейкам.
+
+    Args:
+        min_plausible: если задано, отбрасывает слишком маленькие значения.
 
     Returns:
-        Decimal | None: Сумма для сравнения с расчётом или None, если не удалось найти поле
+        Decimal | None
     """
     wait_while_busy(reason="перед чтением «Всего»")
     location = pyautogui.locateOnScreen(TOTAL_SUM_IMAGE, confidence=IMAGE_CONFIDENCE)
     if location is None:
         return None
-    pyautogui.click(location)
-    time.sleep(TOTAL_SUM_BEFORE_COPY_DELAY)
-    for _ in range(3):
-        pyautogui.doubleClick(location)
+
+    last_ok = None
+    for attempt in range(1, TOTAL_SUM_READ_RETRIES + 1):
+        x, y = _click_total_sum_field(location)
+        time.sleep(TOTAL_SUM_BEFORE_COPY_DELAY)
+        pyautogui.doubleClick(x, y)
         time.sleep(FIELD_DELAY)
-    time.sleep(TOTAL_SUM_BEFORE_COPY_DELAY)
-    pyautogui.hotkey('ctrl', 'c')
-    time.sleep(PASTE_AFTER_COPY_DELAY)
-    raw = pyperclip.paste().strip()
-    parsed = to_decimal(raw)
-    return _normalize_read_total(parsed)
+        time.sleep(TOTAL_SUM_BEFORE_COPY_DELAY)
+
+        raw = _copy_to_clipboard(select_all=True)
+        if raw is None:
+            print(f"⚠ Не удалось скопировать «Всего» (попытка {attempt}/{TOTAL_SUM_READ_RETRIES})")
+            continue
+
+        parsed = _as_money(_normalize_read_total(to_decimal(raw)))
+        if min_plausible is not None and parsed < _as_money(min_plausible):
+            print(
+                f"⚠ Подозрительно малое «Всего»: {parsed} "
+                f"(ожидали ≥ {_as_money(min_plausible)}), повтор чтения..."
+            )
+            last_ok = None
+            time.sleep(COPY_RETRY_DELAY)
+            continue
+
+        if last_ok is not None and parsed == last_ok:
+            return parsed
+        last_ok = parsed
+        time.sleep(COPY_RETRY_DELAY)
+
+    return last_ok
 
 
-def paste_text(text):
-    """Вставляет текст через буфер. Перед Ctrl+V ждём, чтобы буфер точно обновился."""
-    text = str(text).strip()
-    z = text
-    pyperclip.copy(text)
-    time.sleep(PASTE_AFTER_COPY_DELAY)
-    pyautogui.hotkey('ctrl', 'v')
+def get_skipped_products():
+    """Позиции, пропущенные из‑за отсутствия номенклатуры в 1С."""
+    return list(_skipped_products)
 
 
-def _ensure_nomenclature_exists(nomenclature):
-    """
-    Если в выпадающем списке есть пункт создания — номенклатуры нет в базе.
-    Raises:
-        ValueError: с именем отсутствующей номенклатуры
-    """
+def clear_skipped_products():
+    global _skipped_products
+    _skipped_products = []
+
+
+def _nomenclature_missing_on_screen():
+    """True, если в выпадающем списке виден пункт создания (= номенклатуры нет)."""
     try:
         found = pyautogui.locateOnScreen(
             MISSING_NOMENCLATURE_IMAGE,
@@ -362,25 +435,44 @@ def _ensure_nomenclature_exists(nomenclature):
         )
     except pyautogui.ImageNotFoundException:
         found = None
-    if found is not None:
-        raise ValueError(f"Номенклатура не найдена в 1С: {nomenclature}")
+    return found is not None
+
+
+def _cancel_incomplete_row():
+    """
+    Закрывает выпадающий список и удаляет недозаполненную строку
+    так же, как при ретрае батча: клик по иконке/заголовку таблицы →
+    Ctrl+Home/End → Del на последней строке.
+    """
+    pyautogui.press('esc')
+    time.sleep(FIELD_DELAY)
+    pyautogui.press('esc')
+    time.sleep(FIELD_DELAY)
+    _delete_last_n_rows(1)
+
+
+def paste_text(text):
+    """Вставляет текст через буфер. Перед Ctrl+V ждём, чтобы буфер точно обновился."""
+    text = str(text).strip()
+    pyperclip.copy(text)
+    time.sleep(PASTE_AFTER_COPY_DELAY)
+    pyautogui.hotkey('ctrl', 'v')
 
 
 def fill_nomenclature(nomenclature):
     """
     Заполняет поле номенклатуры (создание новой не выполняется).
-    Если номенклатуры нет в базе — ошибка с её именем.
-    Затем Enter переходит к количеству.
 
-    Args:
-        nomenclature (str): Наименование номенклатуры
+    Returns:
+        bool: True если номенклатура найдена и выбрана, False если её нет в базе.
     """
     expected = str(nomenclature).strip()
     pyautogui.press('del')
     paste_text(expected)
     time.sleep(NOMENCLATURE_INPUT_DELAY)
 
-    _ensure_nomenclature_exists(expected)
+    if _nomenclature_missing_on_screen():
+        return False
 
     # Проверка: копируем содержимое поля и сравниваем с ожидаемым
     pyautogui.hotkey('ctrl', 'a')
@@ -391,11 +483,13 @@ def fill_nomenclature(nomenclature):
         pyautogui.press('del')
         paste_text(expected)
         time.sleep(NOMENCLATURE_INPUT_DELAY)
-        _ensure_nomenclature_exists(expected)
+        if _nomenclature_missing_on_screen():
+            return False
 
     for _ in range(NOMENCLATURE_ENTERS):
         pyautogui.press('enter')
         time.sleep(FIELD_DELAY)
+    return True
 
 
 def fill_quantity(quantity):
@@ -431,20 +525,38 @@ def fill_price(price):
         pyautogui.hotkey('ctrl', 'a')
         pyautogui.write(expected, interval=TYPING_INTERVAL)
 
+    wait_while_busy(reason="после ввода цены")
 
-def fill_product_row(nomenclature, quantity, price, is_first_row=False):
+
+def fill_product_row(nomenclature, quantity, price, row_number=1, is_first_row=False):
     """
     Заполняет одну строку товара.
+    Если номенклатуры нет — удаляет недозаполненную строку и возвращает False.
+
+    Returns:
+        bool: True если строка заполнена, False если пропущена (строки в таблице нет).
     """
+    global _skipped_products, _chunk_skipped
     time.sleep(BETWEEN_ROWS_DELAY)
 
-    # Нажимаем "Добавить" для каждой строки
     click_add_button(is_first_row)
     time.sleep(FIELD_DELAY)
 
-    fill_nomenclature(nomenclature)
+    if not fill_nomenclature(nomenclature):
+        _cancel_incomplete_row()
+        item = (nomenclature, quantity, price)
+        _skipped_products.append(item)
+        _chunk_skipped.append(item)
+        print(
+            f"⚠ Пропуск строки {row_number}: номенклатуры нет в 1С — "
+            f"наименование={nomenclature}, количество={quantity}, цена={price} "
+            f"(строку удаляю, в сумму не входит)"
+        )
+        return False
+
     fill_quantity(quantity)
     fill_price(price)
+    return True
 
 
 def _calc_expected_sum(product_data):
@@ -488,84 +600,137 @@ def _delete_last_n_rows(n):
         pyautogui.press('del')
 
 
-def _last_batch_expected_vs_actual(batch_offset: int, expected_rows: int) -> tuple[int, int]:
+def _last_batch_expected_vs_actual(table_rows_before: int, expected_filled_rows: int) -> tuple[int, int]:
     """
-    Сравнивает ожидание по файлу с фактом в таблице для последнего батча.
-
-    Предполагается, что до начала батча в таблице было batch_offset строк
-    (как индекс начала чанка в product_data). Тогда хвост таблицы после батча —
-    это все строки с индекса batch_offset; их число и есть факт.
+    Сравнивает ожидание с фактом в таблице для последнего батча.
+    Учитываются только реально заполненные строки (пропуски без номенклатуры
+    в таблицу не попадают).
 
     Args:
-        batch_offset: Сколько строк в таблице должно было быть до этого батча.
-        expected_rows: Сколько строк должен добавить батч по файлу (len(chunk)).
+        table_rows_before: Сколько заполненных строк было в таблице до этого батча.
+        expected_filled_rows: Сколько заполненных строк должен добавить батч.
 
     Returns:
-        (expected_rows, actual_rows) — по файлу и по факту в таблице для этого хвоста.
-        Удалять нужно actual_rows последних строк (при дублях actual > expected).
+        (expected_filled_rows, actual_rows) — хвост таблицы после батча.
     """
-    if expected_rows <= 0:
+    if expected_filled_rows <= 0:
         return (0, 0)
     focus_table_and_navigate_rows()
     time.sleep(FIELD_DELAY)
     pyautogui.hotkey('ctrl', 'a')
-    pyautogui.hotkey('ctrl', 'c')
-    time.sleep(PASTE_AFTER_COPY_DELAY)
-    raw = pyperclip.paste().strip()
-    lines = raw.split('\n')
-    actual_rows = max(0, len(lines) - batch_offset)
-    return (expected_rows, actual_rows)
+    time.sleep(FIELD_DELAY)
+    raw = _copy_to_clipboard()
+    if not raw:
+        return (expected_filled_rows, 0)
+    lines = raw.split('\n') if raw else []
+    actual_rows = max(0, len(lines) - table_rows_before)
+    return (expected_filled_rows, actual_rows)
 
 
 def with_batch_sum_check(fn):
     """
     Декоратор: после каждых batch_size записей сравнивает
     ожидаемую сумму с суммой в 1С.
-    batch_size вычисляется как BATCH_CHECK_PERCENT от общего числа записей, но не меньше BATCH_CHECK_MIN.
+    Пропуски (нет номенклатуры) исключаются из суммы и не считаются строками таблицы.
     """
 
     def wrapper(product_data, **kwargs):
-        global _last_read_total
+        global _last_read_total, _chunk_skipped, _skipped_products
+        clear_skipped_products()
         cumulative_expected = _last_read_total
+        table_rows_before = 0  # только успешно заполненные строки
         batch_size = max(BATCH_CHECK_MIN, int(len(product_data) * BATCH_CHECK_PERCENT))
         for i in range(0, len(product_data), batch_size):
             chunk = product_data[i : i + batch_size]
-            fn(chunk, batch_offset=i, **kwargs)
-            chunk_sum = _calc_expected_sum(chunk)
-            cumulative_expected += chunk_sum
-            actual = _read_and_cache_total()
+            base_before_chunk = cumulative_expected
+            skips_before_chunk = len(_skipped_products)
+            rows_before_chunk = table_rows_before
+
+            def _run_chunk():
+                global _chunk_skipped, _skipped_products
+                _skipped_products = _skipped_products[:skips_before_chunk]
+                _chunk_skipped = []
+                fn(chunk, batch_offset=i, **kwargs)
+                skipped = list(_chunk_skipped)
+                chunk_sum = _calc_expected_sum(chunk) - _calc_expected_sum(skipped)
+                filled = len(chunk) - len(skipped)
+                return skipped, chunk_sum, filled
+
+            chunk_skipped, chunk_sum, filled_count = _run_chunk()
+            cumulative_expected = base_before_chunk + chunk_sum
+            min_plausible = (
+                cumulative_expected * Decimal("0.5") if cumulative_expected > 0 else None
+            )
+            actual = _read_and_cache_total(min_plausible=min_plausible)
             records_count = i + len(chunk)
+            if chunk_skipped:
+                print(
+                    f"  (из {len(chunk)} позиций файла заполнено {filled_count}, "
+                    f"пропущено {len(chunk_skipped)}, в сумму чанка {chunk_sum})"
+                )
             if actual is not None:
-                if actual == cumulative_expected:
-                    print(f"✅ Проверка после {records_count} записей: сумма сошлась ({cumulative_expected})")
+                if _as_money(actual) == _as_money(cumulative_expected):
+                    print(
+                        f"✅ Проверка после {records_count} записей: "
+                        f"сумма сошлась ({_as_money(cumulative_expected)})"
+                    )
+                    table_rows_before = rows_before_chunk + filled_count
                 else:
                     print(
-                        f"⚠ После {records_count} записей: ожидалось {cumulative_expected}, в 1С: {actual}"
+                        f"⚠ После {records_count} записей: "
+                        f"ожидалось {_as_money(cumulative_expected)}, "
+                        f"в 1С: {_as_money(actual)}"
                     )
                     for attempt in range(1, MAX_SUM_RETRY_ATTEMPTS + 1):
-                        exp_rows, act_rows = _last_batch_expected_vs_actual(i, len(chunk))
+                        exp_rows, act_rows = _last_batch_expected_vs_actual(
+                            rows_before_chunk, filled_count
+                        )
                         if act_rows > 0:
                             print(
-                                f"  Попытка {attempt}/{MAX_SUM_RETRY_ATTEMPTS}: по файлу ожидалось "
-                                f"{exp_rows} строк, в таблице {act_rows} — удаляю {act_rows} и ввожу заново {exp_rows}..."
+                                f"  Попытка {attempt}/{MAX_SUM_RETRY_ATTEMPTS}: ожидалось "
+                                f"{exp_rows} заполненных строк, в таблице {act_rows} — "
+                                f"удаляю {act_rows} и ввожу заново..."
                             )
                             focus_table_and_navigate_rows()
                             time.sleep(FIELD_DELAY)
                             _delete_last_n_rows(act_rows)
                             time.sleep(FIELD_DELAY)
                         else:
-                            print(f"  Попытка {attempt}/{MAX_SUM_RETRY_ATTEMPTS}: в батч не добавилось ни одной записи, повторяю ввод...")
-                        fn(chunk, batch_offset=i, **kwargs)
-                        actual_retry = _read_and_cache_total()
-                        if actual_retry is not None and actual_retry == cumulative_expected:
-                            print(f"✅ После повторного ввода сумма сошлась ({cumulative_expected})")
+                            print(
+                                f"  Попытка {attempt}/{MAX_SUM_RETRY_ATTEMPTS}: "
+                                f"в батч не добавилось ни одной записи, повторяю ввод..."
+                            )
+                        chunk_skipped, chunk_sum, filled_count = _run_chunk()
+                        cumulative_expected = base_before_chunk + chunk_sum
+                        min_plausible = (
+                            cumulative_expected * Decimal("0.5")
+                            if cumulative_expected > 0
+                            else None
+                        )
+                        actual_retry = _read_and_cache_total(min_plausible=min_plausible)
+                        if actual_retry is not None and _as_money(actual_retry) == _as_money(
+                            cumulative_expected
+                        ):
+                            print(
+                                f"✅ После повторного ввода сумма сошлась "
+                                f"({_as_money(cumulative_expected)})"
+                            )
+                            table_rows_before = rows_before_chunk + filled_count
                             break
-                        print(f"⚠ После попытки {attempt}: ожидалось {cumulative_expected}, в 1С: {actual_retry}")
+                        print(
+                            f"⚠ После попытки {attempt}: "
+                            f"ожидалось {_as_money(cumulative_expected)}, "
+                            f"в 1С: {_as_money(actual_retry) if actual_retry is not None else None}"
+                        )
                     else:
-                        print(f"❌ Сумма не сошлась после {MAX_SUM_RETRY_ATTEMPTS} попыток. Завершение работы.")
+                        print(
+                            f"❌ Сумма не сошлась после {MAX_SUM_RETRY_ATTEMPTS} попыток. "
+                            f"Завершение работы."
+                        )
                         sys.exit(1)
             else:
                 print(f"⚠ Не удалось прочитать сумму из 1С после {records_count} записей")
+                table_rows_before = rows_before_chunk + filled_count
 
     return wrapper
 
@@ -574,22 +739,22 @@ def with_batch_sum_check(fn):
 def automate_data_entry(product_data, batch_offset=0, **kwargs):
     """
     Автоматизирует ввод данных в 1С.
+    Если номенклатуры нет — оставляет пустую строку и пишет пропуск в консоль.
 
     Args:
-        product_data (list): Список кортежей (nomenclature, quantity, price, cost)
+        product_data (list): Список кортежей (nomenclature, quantity, price)
         batch_offset (int): Смещение для чанков (используется декоратором)
     """
-    # Заполняем строки
     for idx, (nomenclature, quantity, price) in enumerate(product_data):
         if ERROR_INJECTION_PERCENT and random.random() < ERROR_INJECTION_PERCENT:
             if random.random() < 0.5:
-                # Пропуск записи — не вводим строку
                 print(f"  [TEST] Пропуск записи {batch_offset + idx + 1}: {nomenclature}")
                 continue
             else:
-                # Неправильная цена — добавляем/вычитаем случайную величину
                 price_dec = to_decimal(price)
-                wrong_price = str(price_dec + (random.choice([-1, 1]) * (abs(price_dec) * Decimal("0.1") + 1)))
+                wrong_price = str(
+                    price_dec + (random.choice([-1, 1]) * (abs(price_dec) * Decimal("0.1") + 1))
+                )
                 print(f"  [TEST] Неправильная цена для {nomenclature}: {price} -> {wrong_price}")
                 price = wrong_price
 
@@ -597,5 +762,6 @@ def automate_data_entry(product_data, batch_offset=0, **kwargs):
             nomenclature,
             quantity,
             price,
+            row_number=batch_offset + idx + 1,
             is_first_row=(batch_offset == 0 and idx == 0),
         )

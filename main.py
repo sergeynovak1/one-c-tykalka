@@ -3,12 +3,16 @@
 Обрабатывает Excel файл и автоматизирует ввод данных в 1С
 (веб-клиент в Яндекс Браузере, документ «Реализация товаров»).
 """
+from decimal import Decimal
+
 from data_processor import process_excel_file, get_total_sum
 from automation import (
     automate_data_entry,
     activate_one_c_window,
     set_english_layout,
     read_total_from_1c,
+    get_skipped_products,
+    _as_money,
 )
 
 
@@ -24,8 +28,8 @@ def main():
             print("\n⚠ Нет товаров для загрузки.")
             return
 
-        total_sum = get_total_sum(products_list)
-        print(f"\n💰 Общая сумма (товары): {total_sum}")
+        file_total = get_total_sum(products_list)
+        print(f"\n💰 Сумма по файлу (все позиции): {file_total}")
 
         print("\n🤖 Разворачиваю Яндекс Браузер...")
         set_english_layout()
@@ -34,14 +38,26 @@ def main():
         print("\n→ Загружаю товары в «Реализация товаров»...")
         automate_data_entry(products_list)
 
-        print("\n✅ Готово! Все данные успешно введены.")
+        skipped = get_skipped_products()
+        skipped_sum = get_total_sum(skipped)
+        expected_sum = file_total - skipped_sum
+        if skipped:
+            print(f"\n⚠ Пропущено позиций без номенклатуры в 1С: {len(skipped)}")
+            for item in skipped:
+                print(f"  → {item}")
+            print(f"💰 Ожидаемая сумма без пропусков: {expected_sum}")
 
-        actual_sum = read_total_from_1c()
+        print("\n✅ Готово! Ввод завершён.")
+
+        min_plausible = expected_sum * Decimal("0.5") if expected_sum > 0 else None
+        actual_sum = read_total_from_1c(min_plausible=min_plausible)
         if actual_sum is not None:
-            if actual_sum == total_sum:
-                print(f"✅ Сумма сошлась: {total_sum}")
+            expected_m = _as_money(expected_sum)
+            actual_m = _as_money(actual_sum)
+            if actual_m == expected_m:
+                print(f"✅ Сумма сошлась: {expected_m}")
             else:
-                print(f"⚠ Сумма не сошлась! Расчётная: {total_sum}, в 1С: {actual_sum}")
+                print(f"⚠ Сумма не сошлась! Расчётная: {expected_m}, в 1С: {actual_m}")
         else:
             print("⚠ Не удалось прочитать сумму из поля «Всего» в 1С.")
 

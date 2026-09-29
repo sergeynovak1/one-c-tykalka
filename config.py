@@ -34,6 +34,11 @@ FIELD_DELAY = 0.03
 PASTE_AFTER_COPY_DELAY = 0.15
 # Пауза после кликов по «Всего:», до Ctrl+C (иначе копируется не то поле)
 TOTAL_SUM_BEFORE_COPY_DELAY = 0.5
+# Сколько раз повторять чтение «Всего» / Ctrl+C при пустом или нестабильном буфере
+TOTAL_SUM_READ_RETRIES = 5
+COPY_RETRY_DELAY = 0.3
+# Клик правее лейбла «Всего:», в само поле суммы (доля ширины картинки)
+TOTAL_SUM_CLICK_X_RATIO = 0.75
 
 # Ожидание, пока браузер/1С «подтупливает»
 BUSY_POLL_INTERVAL = 0.2
