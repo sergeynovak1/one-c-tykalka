@@ -19,8 +19,8 @@ getcontext().prec = 28
 DOCUMENT_SHEET_NAME = "Документ"
 HEADER_ROWS = 3
 COL_NOMENCLATURE = 1   # Товар
-COL_QUANTITY = 10      # Расход → Количество
-COL_PRICE = 16         # Расход → Отпускные суммы → Цена
+COL_QUANTITY = 4       # Приход → Количество
+COL_PRICE = 5          # Приход → Цена
 
 
 def find_xlsx_file():
@@ -113,7 +113,7 @@ def clean_spaces(text, max_length=100):
 def load_and_prepare_data(file_path):
     """
     Загружает лист «Документ» из «Анализа контрагентов».
-    Берёт товар, количество расхода и отпускную цену.
+    Берёт товар, количество и цену из блока «Приход».
 
     Args:
         file_path (str): Путь к Excel файлу
@@ -145,12 +145,12 @@ def load_and_prepare_data(file_path):
     df["quantity"] = df["quantity"].apply(to_decimal)
     df["price"] = df["price"].apply(to_decimal)
 
-    # Пропускаем пустые строки и позиции без расхода
+    # Пропускаем пустые строки и позиции без прихода
     df = df[(df["nomenclature"] != "") & (df["quantity"] != 0)]
 
     if df.empty:
         raise ValueError(
-            "После чтения «Анализа контрагентов» не осталось позиций с расходом."
+            "После чтения «Анализа контрагентов» не осталось позиций с приходом."
         )
 
     return df.reset_index(drop=True)
@@ -158,7 +158,7 @@ def load_and_prepare_data(file_path):
 
 def group_data(df):
     """
-    Группирует данные по номенклатуре и отпускной цене.
+    Группирует данные по номенклатуре и цене прихода.
 
     Args:
         df (pd.DataFrame): DataFrame с данными
@@ -213,7 +213,7 @@ def prepare_result_list(grouped_df):
 def process_excel_file():
     """
     Основная функция для обработки «Анализа контрагентов».
-    Берёт позиции расхода с отпускной ценой.
+    Берёт позиции прихода (количество и цена).
 
     Returns:
         list: список кортежей (nomenclature, quantity, price)
@@ -225,7 +225,7 @@ def process_excel_file():
     grouped = group_data(df)
     products_list = prepare_result_list(grouped)
 
-    print(f"\n📊 Товары (расход): {len(products_list)} позиций")
+    print(f"\n📊 Товары (приход): {len(products_list)} позиций")
     for item in products_list:
         print(f"  → {item}")
 
