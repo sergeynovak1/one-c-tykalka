@@ -9,7 +9,7 @@ ONE_C_TAB_MARKERS = ("1С:Предприятие", "Бух Фаворит", "1cf
 MAX_BROWSER_TAB_SWITCHES = 15
 
 # Путь к Excel: отчёт «Анализ контрагентов»
-XLSX_FILE_PATTERN = '~/Desktop/ОФД/*.xlsx'
+XLSX_FILE_PATTERN = 'C:/Users/novak/OneDrive/Desktop/ОФД/*.xlsx'
 
 # Навигация по строке «Реализация товаров»:
 # Добавить → номенклатура → Enter → количество → Tab → цена → (снова Добавить)
