@@ -51,6 +51,15 @@ _last_read_total = 0
 _skipped_products = []
 # Пропуски внутри текущего вызова automate_data_entry (одного чанка)
 _chunk_skipped = []
+# Последние успешные координаты клика по иконке/заголовку таблицы
+_table_click_point = None
+# Сколько раз искать table.png, если после «Всего»/скролла картинка временно не матчится
+TABLE_LOCATE_RETRIES = 5
+TABLE_LOCATE_RETRY_DELAY = 0.35
+# На каждой неудачной попытке confidence уменьшается на этот шаг
+TABLE_LOCATE_CONFIDENCE_STEP = 0.05
+# Нижняя граница confidence при поиске таблицы
+TABLE_LOCATE_MIN_CONFIDENCE = 0.75
 
 # WinAPI константы курсора ожидания
 _IDC_WAIT = 32514
@@ -334,18 +343,94 @@ def click_add_button(is_first_row):
     wait_while_busy(reason="после «Добавить»")
 
 
+def _try_locate_table(confidence):
+    """locateOnScreen для TABLE_IMAGE; None если не найдено."""
+    try:
+        return pyautogui.locateOnScreen(TABLE_IMAGE, confidence=confidence)
+    except pyautogui.ImageNotFoundException:
+        return None
+
+
+def _click_point_from_location(location):
+    """Центр бокса locateOnScreen → (x, y)."""
+    return (
+        location.left + location.width // 2,
+        location.top + location.height // 2,
+    )
+
+
+def _locate_table_click_point():
+    """
+    Ищет иконку/заголовок таблицы на экране.
+    После чтения «Всего» или при длинной таблице locate иногда мигает —
+    поэтому ретраи со снижением confidence на шаг и кэш координат.
+    """
+    global _table_click_point
+
+    wait_while_busy(reason="перед фокусом таблицы")
+
+    confidence = float(IMAGE_CONFIDENCE)
+    for attempt in range(1, TABLE_LOCATE_RETRIES + 1):
+        location = _try_locate_table(confidence)
+        if location is not None:
+            point = _click_point_from_location(location)
+            _table_click_point = point
+            return point
+
+        next_confidence = max(
+            TABLE_LOCATE_MIN_CONFIDENCE,
+            confidence - TABLE_LOCATE_CONFIDENCE_STEP,
+        )
+        if next_confidence < confidence:
+            print(
+                f"⚠ table.png не найден (попытка {attempt}/{TABLE_LOCATE_RETRIES}), "
+                f"confidence {confidence:.2f} → {next_confidence:.2f}"
+            )
+            confidence = next_confidence
+        elif attempt < TABLE_LOCATE_RETRIES:
+            print(
+                f"⚠ table.png не найден (попытка {attempt}/{TABLE_LOCATE_RETRIES}), "
+                f"confidence {confidence:.2f}"
+            )
+
+        if attempt < TABLE_LOCATE_RETRIES:
+            # Иногда шапка уезжает после скролла — пробуем поднять таблицу
+            pyautogui.press('pageup')
+            time.sleep(TABLE_LOCATE_RETRY_DELAY)
+
+    if _table_click_point is not None:
+        print(
+            "⚠ table.png не найден на экране — кликаю по запомненным координатам таблицы"
+        )
+        return _table_click_point
+
+    # Запасной вариант: таблица обычно под кнопкой «Добавить»
+    try:
+        add_loc = pyautogui.locateOnScreen(ADD_BUTTON_IMAGE, confidence=IMAGE_CONFIDENCE)
+    except pyautogui.ImageNotFoundException:
+        add_loc = None
+    if add_loc is not None:
+        point = (
+            add_loc.left + add_loc.width // 2,
+            add_loc.top + add_loc.height + 40,
+        )
+        print("⚠ table.png не найден — кликаю под кнопкой «Добавить»")
+        _table_click_point = point
+        return point
+
+    raise Exception('Таблица отчёта (table.png) не найдена')
+
+
 def focus_table_and_navigate_rows():
     """
     Кликает по таблице отчёта, затем переходит на первую строку (Ctrl+Home)
     и на последнюю строку (Ctrl+End).
 
     Raises:
-        Exception: Если изображение таблицы не найдено
+        Exception: Если изображение таблицы не найдено и нет запасной точки клика
     """
-    location = pyautogui.locateOnScreen(TABLE_IMAGE, confidence=IMAGE_CONFIDENCE)
-    if location is None:
-        raise Exception('Таблица отчёта (table.png) не найдена')
-    pyautogui.click(location)
+    x, y = _locate_table_click_point()
+    pyautogui.click(x, y)
     time.sleep(FIELD_DELAY)
     _navigate_table_to_edges()
 
@@ -639,6 +724,11 @@ def with_batch_sum_check(fn):
         clear_skipped_products()
         cumulative_expected = _last_read_total
         table_rows_before = 0  # только успешно заполненные строки
+        # Запоминаем координаты таблицы, пока шапка ещё хорошо видна
+        try:
+            _locate_table_click_point()
+        except Exception as exc:
+            print(f"⚠ Не удалось заранее найти таблицу: {exc}")
         batch_size = max(BATCH_CHECK_MIN, int(len(product_data) * BATCH_CHECK_PERCENT))
         for i in range(0, len(product_data), batch_size):
             chunk = product_data[i : i + batch_size]
@@ -691,8 +781,6 @@ def with_batch_sum_check(fn):
                                 f"{exp_rows} заполненных строк, в таблице {act_rows} — "
                                 f"удаляю {act_rows} и ввожу заново..."
                             )
-                            focus_table_and_navigate_rows()
-                            time.sleep(FIELD_DELAY)
                             _delete_last_n_rows(act_rows)
                             time.sleep(FIELD_DELAY)
                         else:
