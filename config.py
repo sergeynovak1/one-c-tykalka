@@ -9,7 +9,7 @@ ONE_C_TAB_MARKERS = ("1С:Предприятие", "Бух Фаворит", "1cf
 MAX_BROWSER_TAB_SWITCHES = 15
 
 # Путь к Excel: отчёт «Анализ контрагентов»
-XLSX_FILE_PATTERN = 'C:/Users/novak/PycharmProjects/one-c-tykalka/Анализ контрагентов с 01.09.2026 по 15.09.2026 (1).xlsx'
+XLSX_FILE_PATTERN = '~/Desktop/ОФД/*.xlsx'
 
 # Навигация по строке «Реализация товаров»:
 # Добавить → номенклатура → Enter → количество → Tab → цена → (снова Добавить)
@@ -17,13 +17,13 @@ NOMENCLATURE_ENTERS = 1
 QUANTITY_TO_PRICE_TABS = 1
 
 # Пути к изображениям для автоматизации
-ADD_BUTTON_IMAGE = 'C:/Users/novak/PycharmProjects/one-c-tykalka/1c_images/add_button.PNG'
+ADD_BUTTON_IMAGE = 'C:/1c_images/add_button.PNG'
 # Пункт «создать» в выпадающем списке = номенклатуры нет в базе
-MISSING_NOMENCLATURE_IMAGE = 'C:/Users/novak/PycharmProjects/one-c-tykalka/1c_images/create_nomenclature.PNG'
-TOTAL_SUM_IMAGE = 'C:/Users/novak/PycharmProjects/one-c-tykalka/1c_images/total_sum.PNG'
-TABLE_IMAGE = 'C:/Users/novak/PycharmProjects/one-c-tykalka/1c_images/table.PNG'
+MISSING_NOMENCLATURE_IMAGE = 'C:/1c_images/create_nomenclature.PNG'
+TOTAL_SUM_IMAGE = 'C:/1c_images/total_sum.PNG'
+TABLE_IMAGE = 'C:/1c_images/table.PNG'
 # Индикатор загрузки/pending 1С (если файла нет — ждём только по курсору)
-BUSY_IMAGE = 'C:/Users/novak/PycharmProjects/one-c-tykalka/1c_images/busy.PNG'
+BUSY_IMAGE = 'C:/1c_images/busy.PNG'
 
 # Задержки (в секундах)
 WINDOW_ACTIVATION_DELAY = 0.7
