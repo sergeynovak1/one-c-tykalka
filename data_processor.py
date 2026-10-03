@@ -15,12 +15,10 @@ from config import (
 # Устанавливаем точность для Decimal
 getcontext().prec = 28
 
-# Лист и колонки отчёта «Анализ контрагентов» (0-based после skiprows заголовка)
+# Лист отчёта «Анализ контрагентов»; колонки ищем по заголовкам
+# (в разных выгрузках число служебных колонок до «Приход» отличается)
 DOCUMENT_SHEET_NAME = "Документ"
 HEADER_ROWS = 3
-COL_NOMENCLATURE = 1   # Товар
-COL_QUANTITY = 4       # Приход → Количество
-COL_PRICE = 5          # Приход → Цена
 
 
 def find_xlsx_file():
@@ -110,6 +108,61 @@ def clean_spaces(text, max_length=100):
     return cleaned
 
 
+def _cell_str(value):
+    if pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def detect_columns(file_path):
+    """
+    По шапке листа находит колонки: Товар, Приход→Количество, Приход→Цена.
+
+    Returns:
+        tuple[int, int, int]: (nomenclature_col, quantity_col, price_col)
+    """
+    header = pd.read_excel(
+        file_path,
+        sheet_name=DOCUMENT_SHEET_NAME,
+        header=None,
+        nrows=HEADER_ROWS,
+    )
+    row0 = [_cell_str(v) for v in header.iloc[0].tolist()]
+    row1 = [_cell_str(v) for v in header.iloc[1].tolist()]
+
+    try:
+        nomenclature_col = row0.index("Товар")
+    except ValueError as exc:
+        raise ValueError("В шапке листа «Документ» не найдена колонка «Товар».") from exc
+
+    try:
+        prihod_start = row0.index("Приход")
+    except ValueError as exc:
+        raise ValueError("В шапке листа «Документ» не найден блок «Приход».") from exc
+
+    # Блок «Приход» идёт до «Расход» (если есть)
+    try:
+        prihod_end = row0.index("Расход", prihod_start + 1)
+    except ValueError:
+        prihod_end = len(row1)
+
+    quantity_col = None
+    price_col = None
+    for col in range(prihod_start, prihod_end):
+        label = row1[col] if col < len(row1) else ""
+        if label == "Количество" and quantity_col is None:
+            quantity_col = col
+        elif label == "Цена" and price_col is None:
+            price_col = col
+
+    if quantity_col is None or price_col is None:
+        raise ValueError(
+            "В блоке «Приход» не найдены колонки «Количество» и/или «Цена»."
+        )
+
+    return nomenclature_col, quantity_col, price_col
+
+
 def load_and_prepare_data(file_path):
     """
     Загружает лист «Документ» из «Анализа контрагентов».
@@ -121,24 +174,27 @@ def load_and_prepare_data(file_path):
     Returns:
         pd.DataFrame: колонки nomenclature, quantity, price
     """
+    nomenclature_col, quantity_col, price_col = detect_columns(file_path)
+
     df = pd.read_excel(
         file_path,
         sheet_name=DOCUMENT_SHEET_NAME,
         header=None,
         skiprows=HEADER_ROWS,
-        dtype={COL_NOMENCLATURE: str},
+        dtype={nomenclature_col: str},
     )
 
-    if df.shape[1] <= COL_PRICE:
+    needed = max(nomenclature_col, quantity_col, price_col)
+    if df.shape[1] <= needed:
         raise ValueError(
-            f"В листе '{DOCUMENT_SHEET_NAME}' ожидалось минимум {COL_PRICE + 1} колонок, "
+            f"В листе '{DOCUMENT_SHEET_NAME}' ожидалось минимум {needed + 1} колонок, "
             f"получено {df.shape[1]}."
         )
 
     df = pd.DataFrame({
-        "nomenclature": df.iloc[:, COL_NOMENCLATURE],
-        "quantity": df.iloc[:, COL_QUANTITY],
-        "price": df.iloc[:, COL_PRICE],
+        "nomenclature": df.iloc[:, nomenclature_col],
+        "quantity": df.iloc[:, quantity_col],
+        "price": df.iloc[:, price_col],
     })
 
     df["nomenclature"] = df["nomenclature"].apply(clean_spaces)
