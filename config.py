@@ -50,7 +50,7 @@ BUSY_STABLE_POLLS = 3
 TYPING_INTERVAL = 0.01
 
 # Уровень уверенности для поиска изображений
-IMAGE_CONFIDENCE = 0.9
+IMAGE_CONFIDENCE = 0.8
 
 # Доля записей для проверки суммы (0.1 = 10%, батч = 10% от общего числа записей)
 BATCH_CHECK_PERCENT = 0.05
