@@ -24,6 +24,8 @@ from config import (
     BROWSER_TAB_SWITCH_DELAY,
     BETWEEN_ROWS_DELAY,
     NOMENCLATURE_INPUT_DELAY,
+    AFTER_ADD_SETTLE_DELAY,
+    NOMENCLATURE_MISSING_RECHECK_DELAY,
     FIELD_DELAY,
     PASTE_AFTER_COPY_DELAY,
     TOTAL_SUM_BEFORE_COPY_DELAY,
@@ -341,6 +343,8 @@ def click_add_button(is_first_row):
     if not is_first_row:
         pyautogui.click(location)
     wait_while_busy(reason="после «Добавить»")
+    # Новая строка появляется не мгновенно — иначе ввод уходит не в номенклатуру
+    time.sleep(AFTER_ADD_SETTLE_DELAY)
 
 
 def _try_locate_table(confidence):
@@ -359,11 +363,15 @@ def _click_point_from_location(location):
     )
 
 
-def _locate_table_click_point():
+def _locate_table_click_point(nudge_scroll=True):
     """
     Ищет иконку/заголовок таблицы на экране.
     После чтения «Всего» или при длинной таблице locate иногда мигает —
     поэтому ретраи со снижением confidence на шаг и кэш координат.
+
+    Args:
+        nudge_scroll: если True, на неудачной попытке жмёт PageUp
+            (перед первым вводом лучше False — иначе сбивается фокус).
     """
     global _table_click_point
 
@@ -395,7 +403,8 @@ def _locate_table_click_point():
 
         if attempt < TABLE_LOCATE_RETRIES:
             # Иногда шапка уезжает после скролла — пробуем поднять таблицу
-            pyautogui.press('pageup')
+            if nudge_scroll:
+                pyautogui.press('pageup')
             time.sleep(TABLE_LOCATE_RETRY_DELAY)
 
     if _table_click_point is not None:
@@ -523,6 +532,43 @@ def _nomenclature_missing_on_screen():
     return found is not None
 
 
+def _nomenclature_confirmed_missing():
+    """
+    1С сначала рисует «создать», потом подгружает совпадения.
+    Считаем пропуском только если пункт остался после ожидания поиска.
+    """
+    if not _nomenclature_missing_on_screen():
+        return False
+    time.sleep(NOMENCLATURE_MISSING_RECHECK_DELAY)
+    wait_while_busy(reason="пока ищется номенклатура")
+    return _nomenclature_missing_on_screen()
+
+
+def _read_active_field():
+    """Ctrl+A/C из текущего поля. Буфер сначала очищаем, чтобы не принять старую вставку."""
+    pyperclip.copy("")
+    time.sleep(PASTE_AFTER_COPY_DELAY)
+    pyautogui.hotkey('ctrl', 'a')
+    time.sleep(FIELD_DELAY)
+    pyautogui.hotkey('ctrl', 'c')
+    time.sleep(COPY_RETRY_DELAY)
+    return str(pyperclip.paste() or "").strip()
+
+
+def _restore_table_focus():
+    """Возвращает фокус в таблицу после клика по «Всего» — без Ctrl+Home/End."""
+    if _table_click_point is not None:
+        pyautogui.click(*_table_click_point)
+        time.sleep(FIELD_DELAY)
+        return
+    try:
+        x, y = _locate_table_click_point(nudge_scroll=False)
+        pyautogui.click(x, y)
+        time.sleep(FIELD_DELAY)
+    except Exception:
+        pass
+
+
 def _cancel_incomplete_row():
     """
     Закрывает выпадающий список и удаляет недозаполненную строку
@@ -552,28 +598,30 @@ def fill_nomenclature(nomenclature):
         bool: True если номенклатура найдена и выбрана, False если её нет в базе.
     """
     expected = str(nomenclature).strip()
+    wait_while_busy(reason="перед вводом номенклатуры")
     pyautogui.press('del')
     paste_text(expected)
     time.sleep(NOMENCLATURE_INPUT_DELAY)
+    wait_while_busy(reason="после ввода номенклатуры")
 
-    if _nomenclature_missing_on_screen():
+    if _nomenclature_confirmed_missing():
         return False
 
-    # Проверка: копируем содержимое поля и сравниваем с ожидаемым
-    pyautogui.hotkey('ctrl', 'a')
-    pyautogui.hotkey('ctrl', 'c')
-    actual = pyperclip.paste().strip()
-
+    actual = _read_active_field()
     if not actual or actual != expected:
         pyautogui.press('del')
         paste_text(expected)
         time.sleep(NOMENCLATURE_INPUT_DELAY)
-        if _nomenclature_missing_on_screen():
+        wait_while_busy(reason="после повторного ввода номенклатуры")
+        if _nomenclature_confirmed_missing():
             return False
 
     for _ in range(NOMENCLATURE_ENTERS):
         pyautogui.press('enter')
         time.sleep(FIELD_DELAY)
+    # Пока 1С выбирает товар, фокус ещё в названии — количество/цена уедут туда же
+    wait_while_busy(reason="после выбора номенклатуры")
+    time.sleep(FIELD_DELAY)
     return True
 
 
@@ -584,10 +632,12 @@ def fill_quantity(quantity):
     Args:
         quantity (str): Количество
     """
+    wait_while_busy(reason="перед количеством")
     pyautogui.write(quantity, interval=TYPING_INTERVAL)
     for _ in range(QUANTITY_TO_PRICE_TABS):
         pyautogui.press('tab')
         time.sleep(FIELD_DELAY)
+    wait_while_busy(reason="перед ценой")
 
 
 def fill_price(price):
@@ -726,7 +776,7 @@ def with_batch_sum_check(fn):
         table_rows_before = 0  # только успешно заполненные строки
         # Запоминаем координаты таблицы, пока шапка ещё хорошо видна
         try:
-            _locate_table_click_point()
+            _locate_table_click_point(nudge_scroll=False)
         except Exception as exc:
             print(f"⚠ Не удалось заранее найти таблицу: {exc}")
         batch_size = max(BATCH_CHECK_MIN, int(len(product_data) * BATCH_CHECK_PERCENT))
@@ -752,6 +802,7 @@ def with_batch_sum_check(fn):
                 cumulative_expected * Decimal("0.5") if cumulative_expected > 0 else None
             )
             actual = _read_and_cache_total(min_plausible=min_plausible)
+            _restore_table_focus()
             records_count = i + len(chunk)
             if chunk_skipped:
                 print(
@@ -796,6 +847,7 @@ def with_batch_sum_check(fn):
                             else None
                         )
                         actual_retry = _read_and_cache_total(min_plausible=min_plausible)
+                        _restore_table_focus()
                         if actual_retry is not None and _as_money(actual_retry) == _as_money(
                             cumulative_expected
                         ):

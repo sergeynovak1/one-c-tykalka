@@ -29,7 +29,11 @@ BUSY_IMAGE = 'C:/1c_images/busy.PNG'
 WINDOW_ACTIVATION_DELAY = 0.7
 BROWSER_TAB_SWITCH_DELAY = 0.35
 BETWEEN_ROWS_DELAY = 0.05
-NOMENCLATURE_INPUT_DELAY = 0.3
+NOMENCLATURE_INPUT_DELAY = 0.45
+# После «Добавить» ячейка номенклатуры ещё не в фокусе
+AFTER_ADD_SETTLE_DELAY = 0.2
+# Повторная проверка «создать»: 1С сначала рисует его, потом подгружает совпадения
+NOMENCLATURE_MISSING_RECHECK_DELAY = 0.4
 FIELD_DELAY = 0.03
 PASTE_AFTER_COPY_DELAY = 0.15
 # Пауза после кликов по «Всего:», до Ctrl+C (иначе копируется не то поле)
