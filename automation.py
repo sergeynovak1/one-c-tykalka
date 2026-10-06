@@ -6,7 +6,7 @@ import os
 import re
 import pyautogui
 import random
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import ctypes
 import pygetwindow as gw
 import time
@@ -45,7 +45,7 @@ from config import (
     NOMENCLATURE_ENTERS,
     QUANTITY_TO_PRICE_TABS,
 )
-from data_processor import to_decimal
+from data_processor import parse_total_text, to_decimal
 
 # Кэш последнего прочитанного "Всего" из 1С (чтобы не читать дважды подряд)
 _last_read_total = 0
@@ -492,7 +492,21 @@ def read_total_from_1c(min_plausible=None):
             print(f"⚠ Не удалось скопировать «Всего» (попытка {attempt}/{TOTAL_SUM_READ_RETRIES})")
             continue
 
-        parsed = _as_money(_normalize_read_total(to_decimal(raw)))
+        try:
+            parsed_amount = parse_total_text(raw)
+        except (InvalidOperation, ValueError):
+            parsed_amount = None
+        if parsed_amount is None:
+            preview = " ".join(str(raw).split())
+            if len(preview) > 160:
+                preview = preview[:160] + "…"
+            print(
+                f"⚠ «Всего» скопировалось не числом "
+                f"(попытка {attempt}/{TOTAL_SUM_READ_RETRIES}): {preview}"
+            )
+            continue
+
+        parsed = _as_money(_normalize_read_total(parsed_amount))
         if min_plausible is not None and parsed < _as_money(min_plausible):
             print(
                 f"⚠ Подозрительно малое «Всего»: {parsed} "
