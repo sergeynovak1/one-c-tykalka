@@ -1,0 +1,7 @@
+.venv/
+.idea/
+.chromium-1c-profile/
+.pw-browsers/
+__pycache__/
+*.pyc
+*.xlsx
