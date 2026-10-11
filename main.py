@@ -3,7 +3,7 @@
 Сначала: python start_chromium.py → открой документ → python main.py
 """
 from config import FILL_ROWS_LIMIT
-from data_processor import process_excel_file, get_total_sum
+from data_processor import as_money, process_excel_file, get_total_sum
 from playwright_automation import run_fill_rows
 
 
@@ -23,15 +23,16 @@ def main():
         for i, item in enumerate(batch, start=1):
             print(f"  {i}. {item}")
 
-        skipped = run_fill_rows(batch, limit=FILL_ROWS_LIMIT)
+        skipped, expected = run_fill_rows(batch, limit=FILL_ROWS_LIMIT)
         if skipped:
             skipped_sum = get_total_sum(skipped)
             print(f"\n⚠ Пропущено позиций без номенклатуры в 1С: {len(skipped)}")
             for item in skipped:
                 print(f"  → {item}")
             print(f"💰 Сумма пропусков: {skipped_sum}")
-            print(f"💰 Ожидаемая сумма без пропусков (по батчу): "
-                  f"{get_total_sum(batch) - skipped_sum}")
+
+        if expected is not None:
+            print(f"\n💰 Итоговая ожидаемая сумма (с учётом базы в 1С): {as_money(expected)}")
 
     except FileNotFoundError as e:
         print(f"\n❌ Ошибка: {e}")

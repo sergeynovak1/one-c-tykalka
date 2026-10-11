@@ -130,6 +130,93 @@ def to_decimal(value):
     return Decimal(canonical)
 
 
+# Сумма в тексте: 1 234,56 / 1.234.567,89 / 1,234,567.89 / 1234.56
+_GROUP_SPACE = " \u00a0\u202f\u2009"
+_AMOUNT_BODY = (
+    r"-?(?:"
+    r"\d{1,3}(?:[" + _GROUP_SPACE + r"]\d{3})+(?:[.,]\d+)?"
+    r"|\d{1,3}(?:\.\d{3})+(?:,\d+)?"
+    r"|\d{1,3}(?:,\d{3})+(?:\.\d+)?"
+    r"|\d+(?:[.,]\d+)?"
+    r")"
+)
+_AMOUNT_RE = re.compile(r"(?<![\d.,])(" + _AMOUNT_BODY + r")(?![\d.,])")
+_LABELED_TOTAL_RE = re.compile(
+    r"(?<!\w)Всего(?!\s*с\s+НДС)\s*:?\s*(" + _AMOUNT_BODY + r")",
+    re.IGNORECASE,
+)
+
+
+def _is_money_token(token: str) -> bool:
+    """Сумма с копейками или с группами разрядов, не голое целое вроде «10»."""
+    spaced = token.strip()
+    compact = (
+        spaced.replace(" ", "")
+        .replace("\xa0", "")
+        .replace("\u202f", "")
+        .replace("\u2009", "")
+    )
+    if re.fullmatch(r"-?\d{1,3}(?:[" + _GROUP_SPACE + r"]\d{3})+(?:[.,]\d+)?", spaced):
+        return True
+    if re.fullmatch(r"-?\d+,\d+", compact):
+        return True
+    if re.fullmatch(r"-?\d{1,3}(?:\.\d{3})+(?:,\d+)?", compact):
+        return True
+    if re.fullmatch(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?", compact):
+        return True
+    if re.fullmatch(r"-?\d+\.\d+", compact):
+        return True
+    return False
+
+
+def parse_total_text(text):
+    """
+    Достаёт одну сумму из текста поля «Всего».
+    Одно число — берём его. Несколько — только у единственной подписи «Всего».
+    """
+    if text is None or (isinstance(text, float) and pd.isna(text)):
+        return None
+    raw = str(text).replace("\xa0", " ").replace("\u202f", " ").replace("\u2009", " ")
+    raw = raw.replace("−", "-").replace("–", "-").strip()
+    if not raw:
+        return None
+
+    tokens = _AMOUNT_RE.findall(raw)
+    if len(tokens) == 1:
+        try:
+            return to_decimal(tokens[0])
+        except InvalidOperation:
+            return None
+
+    parsed = []
+    for token in tokens:
+        if not _is_money_token(token):
+            continue
+        try:
+            parsed.append(to_decimal(token))
+        except InvalidOperation:
+            continue
+    if parsed and len(parsed) == len(tokens) and len(set(parsed)) == 1:
+        return parsed[0]
+
+    labeled = []
+    for token in _LABELED_TOTAL_RE.findall(raw):
+        if not _is_money_token(token):
+            continue
+        try:
+            labeled.append(to_decimal(token))
+        except InvalidOperation:
+            continue
+    if labeled and len(set(labeled)) == 1:
+        return labeled[0]
+    return None
+
+
+def as_money(value) -> Decimal:
+    """Округление до копеек — как в поле «Всего» 1С."""
+    return to_decimal(value).quantize(Decimal("0.01"))
+
+
 def clean_spaces(text, max_length=100):
     """
     Очищает строку:

@@ -2,6 +2,8 @@
 Автоматизация ввода в веб-клиент 1С через Playwright + CDP.
 Скрипт подключается к уже открытому Chromium (remote debugging).
 """
+from decimal import Decimal
+
 from playwright.sync_api import sync_playwright, Browser, Page, TimeoutError as PlaywrightTimeout
 
 from config import (
@@ -10,6 +12,10 @@ from config import (
     ONE_C_TITLE_MARKERS,
     NOMENCLATURE_ENTERS,
     FILL_ROWS_LIMIT,
+    BATCH_CHECK_PERCENT,
+    BATCH_CHECK_MIN,
+    TOTAL_SUM_READ_RETRIES,
+    TOTAL_SUM_VAT_RATE,
     AFTER_ADD_SETTLE_DELAY_MS,
     NOMENCLATURE_INPUT_DELAY_MS,
     NOMENCLATURE_MISSING_RECHECK_DELAY_MS,
@@ -17,6 +23,7 @@ from config import (
     FIELD_DELAY_MS,
     BETWEEN_ROWS_DELAY_MS,
 )
+from data_processor import as_money, parse_total_text, to_decimal
 
 # Позиции, пропущенные из‑за отсутствия номенклатуры в 1С
 _skipped_products: list[tuple] = []
@@ -377,28 +384,137 @@ def fill_product_row(
     return True
 
 
-def fill_product_rows(page: Page, products: list[tuple]) -> tuple[int, int]:
+def _normalize_read_total(raw: Decimal) -> Decimal:
+    """Если TOTAL_SUM_VAT_RATE > 0, сумма из 1С с НДС: делим на (1 + ставка)."""
+    rate = to_decimal(TOTAL_SUM_VAT_RATE)
+    if rate == 0:
+        return raw
+    return raw / (Decimal("1") + rate)
+
+
+def read_total_from_1c(page: Page, min_plausible=None) -> Decimal | None:
     """
-    Заполняет переданные позиции подряд.
+    Читает поле «Всего» (ИтогиВсего), не НДС.
     Returns:
-        (заполнено, пропущено)
+        Decimal | None
+    """
+    loc = page.locator(
+        'input.editInput[id*="ИтогиВсего_i"]:not([id*="НДС"])'
+    )
+    if loc.count() == 0:
+        # запасной вариант — по лейблу
+        title = page.locator('[id*="ИтогиВсего#title"]')
+        if title.count() == 0:
+            return None
+
+    last_ok = None
+    for attempt in range(1, TOTAL_SUM_READ_RETRIES + 1):
+        try:
+            target = loc.first
+            if not target.is_visible():
+                page.wait_for_timeout(FIELD_DELAY_MS)
+                continue
+            raw = (target.input_value() or "").strip()
+            parsed_amount = parse_total_text(raw)
+            if parsed_amount is None:
+                print(
+                    f"⚠ «Всего» не число "
+                    f"(попытка {attempt}/{TOTAL_SUM_READ_RETRIES}): {raw!r}"
+                )
+                page.wait_for_timeout(FIELD_DELAY_MS)
+                continue
+
+            parsed = as_money(_normalize_read_total(parsed_amount))
+            if min_plausible is not None and parsed < as_money(min_plausible):
+                print(
+                    f"⚠ Подозрительно малое «Всего»: {parsed} "
+                    f"(ожидали ≥ {as_money(min_plausible)}), повтор..."
+                )
+                last_ok = None
+                page.wait_for_timeout(FIELD_DELAY_MS)
+                continue
+
+            if last_ok is not None and parsed == last_ok:
+                return parsed
+            last_ok = parsed
+            page.wait_for_timeout(FIELD_DELAY_MS)
+        except Exception as exc:
+            print(
+                f"⚠ Ошибка чтения «Всего» "
+                f"(попытка {attempt}/{TOTAL_SUM_READ_RETRIES}): {exc}"
+            )
+            page.wait_for_timeout(FIELD_DELAY_MS)
+    return last_ok
+
+
+def _batch_size(total_items: int) -> int:
+    return max(BATCH_CHECK_MIN, int(total_items * BATCH_CHECK_PERCENT))
+
+
+def _check_sum(page: Page, expected: Decimal, after_n: int) -> bool:
+    """Сверяет «Всего» с ожиданием. True если сошлось или прочитать не удалось."""
+    min_plausible = expected * Decimal("0.5") if expected > 0 else None
+    actual = read_total_from_1c(page, min_plausible=min_plausible)
+    if actual is None:
+        print(f"⚠ После {after_n} записей: не удалось прочитать «Всего».")
+        return True
+    exp_m = as_money(expected)
+    act_m = as_money(actual)
+    if act_m == exp_m:
+        print(f"✅ Проверка после {after_n} записей: сумма сошлась ({exp_m})")
+        return True
+    print(
+        f"⚠ Сумма не сошлась после {after_n} записей! "
+        f"Расчётная: {exp_m}, в 1С: {act_m}"
+    )
+    return False
+
+
+def fill_product_rows(page: Page, products: list[tuple]) -> tuple[int, int, Decimal]:
+    """
+    Заполняет позиции подряд, сверяет «Всего» батчами.
+    Returns:
+        (заполнено, пропущено, ожидаемая_сумма_с_учётом_базы)
     """
     filled = 0
     skipped = 0
+    chunk = _batch_size(len(products))
+
+    base = read_total_from_1c(page) or Decimal("0")
+    print(f"💰 «Всего» в 1С до заполнения: {as_money(base)}")
+    expected = as_money(base)
+
     for i, (nomenclature, quantity, price) in enumerate(products, start=1):
-        if fill_product_row(page, nomenclature, quantity, price, row_number=i):
+        ok = fill_product_row(
+            page, nomenclature, quantity, price, row_number=i
+        )
+        if ok:
             filled += 1
+            expected = as_money(
+                expected + to_decimal(price) * to_decimal(quantity)
+            )
         else:
             skipped += 1
+
+        # проверка по числу обработанных позиций файла (как раньше)
+        if i % chunk == 0:
+            _check_sum(page, expected, after_n=i)
+
+    # финальная сверка, если не попали на границу батча
+    if len(products) % chunk != 0:
+        _check_sum(page, expected, after_n=len(products))
+
     print(f"✅ Готово: заполнено {filled}, пропущено {skipped}.")
-    return filled, skipped
+    return filled, skipped, expected
 
 
-def run_fill_rows(products: list[tuple], limit: int = FILL_ROWS_LIMIT) -> list[tuple]:
+def run_fill_rows(
+    products: list[tuple], limit: int = FILL_ROWS_LIMIT
+) -> tuple[list[tuple], Decimal | None]:
     """
     Точка входа: CDP → страница 1С → первые limit строк.
     Returns:
-        список пропущенных позиций
+        (пропущенные позиции, ожидаемая сумма после заполнения)
     """
     batch = list(products[:limit])
     if not batch:
@@ -408,8 +524,8 @@ def run_fill_rows(products: list[tuple], limit: int = FILL_ROWS_LIMIT) -> list[t
     pw, browser = connect_browser()
     try:
         page = find_one_c_page(browser)
-        fill_product_rows(page, batch)
-        return get_skipped_products()
+        _filled, _skipped, expected = fill_product_rows(page, batch)
+        return get_skipped_products(), expected
     except PlaywrightTimeout as exc:
         raise TimeoutError(
             f"Таймаут при работе с 1С: {exc}"
