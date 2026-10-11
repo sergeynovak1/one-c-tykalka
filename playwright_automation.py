@@ -2,6 +2,7 @@
 Автоматизация ввода в веб-клиент 1С через Playwright + CDP.
 Скрипт подключается к уже открытому Chromium (remote debugging).
 """
+import sys
 from decimal import Decimal
 
 from playwright.sync_api import sync_playwright, Browser, Page, TimeoutError as PlaywrightTimeout
@@ -15,6 +16,7 @@ from config import (
     BATCH_CHECK_PERCENT,
     BATCH_CHECK_MIN,
     TOTAL_SUM_READ_RETRIES,
+    MAX_SUM_RETRY_ATTEMPTS,
     TOTAL_SUM_VAT_RATE,
     AFTER_ADD_SETTLE_DELAY_MS,
     NOMENCLATURE_INPUT_DELAY_MS,
@@ -451,13 +453,47 @@ def _batch_size(total_items: int) -> int:
     return max(BATCH_CHECK_MIN, int(total_items * BATCH_CHECK_PERCENT))
 
 
-def _check_sum(page: Page, expected: Decimal, after_n: int) -> bool:
-    """Сверяет «Всего» с ожиданием. True если сошлось или прочитать не удалось."""
+def delete_last_n_rows(page: Page, n: int) -> None:
+    """
+    Удаляет последние n строк табличной части (как старый GUI: Ctrl+End → Del).
+    """
+    if n <= 0:
+        return
+    dismiss_overlays(page)
+    try:
+        body = page.locator(".gridBody").first
+        box = body.bounding_box()
+        if box and box["width"] > 0 and box["height"] > 0:
+            page.mouse.click(
+                box["x"] + min(80, box["width"] / 2),
+                box["y"] + box["height"] - 12,
+            )
+            page.wait_for_timeout(FIELD_DELAY_MS)
+    except Exception:
+        pass
+
+    page.keyboard.press("Control+End")
+    page.wait_for_timeout(FIELD_DELAY_MS)
+
+    for _ in range(n):
+        dismiss_overlays(page)
+        page.keyboard.press("Delete")
+        page.wait_for_timeout(FIELD_DELAY_MS)
+        _confirm_delete_dialog(page)
+        page.wait_for_timeout(FIELD_DELAY_MS)
+
+
+def _check_sum(page: Page, expected: Decimal, after_n: int) -> bool | None:
+    """
+    Сверяет «Всего» с ожиданием.
+    Returns:
+        True — сошлось; False — не сошлось; None — не удалось прочитать.
+    """
     min_plausible = expected * Decimal("0.5") if expected > 0 else None
     actual = read_total_from_1c(page, min_plausible=min_plausible)
     if actual is None:
         print(f"⚠ После {after_n} записей: не удалось прочитать «Всего».")
-        return True
+        return None
     exp_m = as_money(expected)
     act_m = as_money(actual)
     if act_m == exp_m:
@@ -470,42 +506,105 @@ def _check_sum(page: Page, expected: Decimal, after_n: int) -> bool:
     return False
 
 
-def fill_product_rows(page: Page, products: list[tuple]) -> tuple[int, int, Decimal]:
+def _fill_chunk(
+    page: Page, chunk: list[tuple], row_offset: int
+) -> tuple[int, Decimal]:
     """
-    Заполняет позиции подряд, сверяет «Всего» батчами.
+    Заполняет один батч.
     Returns:
-        (заполнено, пропущено, ожидаемая_сумма_с_учётом_базы)
+        (сколько строк реально добавлено, сумма батча без пропусков)
     """
     filled = 0
-    skipped = 0
-    chunk = _batch_size(len(products))
+    chunk_sum = Decimal("0")
 
-    base = read_total_from_1c(page) or Decimal("0")
-    print(f"💰 «Всего» в 1С до заполнения: {as_money(base)}")
-    expected = as_money(base)
-
-    for i, (nomenclature, quantity, price) in enumerate(products, start=1):
+    for j, (nomenclature, quantity, price) in enumerate(chunk):
         ok = fill_product_row(
-            page, nomenclature, quantity, price, row_number=i
+            page,
+            nomenclature,
+            quantity,
+            price,
+            row_number=row_offset + j + 1,
         )
         if ok:
             filled += 1
-            expected = as_money(
-                expected + to_decimal(price) * to_decimal(quantity)
-            )
-        else:
-            skipped += 1
+            chunk_sum += to_decimal(price) * to_decimal(quantity)
 
-        # проверка по числу обработанных позиций файла (как раньше)
-        if i % chunk == 0:
-            _check_sum(page, expected, after_n=i)
+    return filled, as_money(chunk_sum)
 
-    # финальная сверка, если не попали на границу батча
-    if len(products) % chunk != 0:
-        _check_sum(page, expected, after_n=len(products))
 
-    print(f"✅ Готово: заполнено {filled}, пропущено {skipped}.")
-    return filled, skipped, expected
+def _rollback_chunk_skips(skips_before: int) -> None:
+    """Убирает пропуски текущего батча перед повторным вводом."""
+    global _skipped_products
+    _skipped_products = _skipped_products[:skips_before]
+
+
+def fill_product_rows(page: Page, products: list[tuple]) -> tuple[int, int, Decimal]:
+    """
+    Заполняет позиции батчами. При несхождении суммы — удаляет строки
+    батча и вбивает заново (до MAX_SUM_RETRY_ATTEMPTS), иначе sys.exit(1).
+    Returns:
+        (заполнено, пропущено, ожидаемая_сумма_с_учётом_базы)
+    """
+    chunk_size = _batch_size(len(products))
+    base = read_total_from_1c(page) or Decimal("0")
+    print(f"💰 «Всего» в 1С до заполнения: {as_money(base)}")
+    print(
+        f"📦 Батч сверки: {chunk_size} позиций "
+        f"(retry до {MAX_SUM_RETRY_ATTEMPTS} раз при ошибке)"
+    )
+
+    expected = as_money(base)
+    total_filled = 0
+
+    for start in range(0, len(products), chunk_size):
+        chunk = products[start : start + chunk_size]
+        base_before = expected
+        skips_before = len(_skipped_products)
+
+        filled, chunk_sum = _fill_chunk(page, chunk, row_offset=start)
+        expected = as_money(base_before + chunk_sum)
+        after_n = start + len(chunk)
+
+        ok = _check_sum(page, expected, after_n=after_n)
+        if ok is False:
+            for attempt in range(1, MAX_SUM_RETRY_ATTEMPTS + 1):
+                if filled > 0:
+                    print(
+                        f"  Попытка {attempt}/{MAX_SUM_RETRY_ATTEMPTS}: "
+                        f"удаляю {filled} строк батча и ввожу заново..."
+                    )
+                    delete_last_n_rows(page, filled)
+                else:
+                    print(
+                        f"  Попытка {attempt}/{MAX_SUM_RETRY_ATTEMPTS}: "
+                        f"в батч не добавилось ни одной записи, повторяю ввод..."
+                    )
+
+                _rollback_chunk_skips(skips_before)
+                filled, chunk_sum = _fill_chunk(page, chunk, row_offset=start)
+                expected = as_money(base_before + chunk_sum)
+                ok = _check_sum(page, expected, after_n=after_n)
+                if ok is True:
+                    print(
+                        f"✅ После повторного ввода сумма сошлась "
+                        f"({as_money(expected)})"
+                    )
+                    break
+                print(
+                    f"⚠ После попытки {attempt}: ожидалось {as_money(expected)}"
+                )
+            else:
+                print(
+                    f"❌ Сумма не сошлась после {MAX_SUM_RETRY_ATTEMPTS} попыток. "
+                    f"Завершение работы."
+                )
+                sys.exit(1)
+
+        total_filled += filled
+
+    total_skipped = len(_skipped_products)
+    print(f"✅ Готово: заполнено {total_filled}, пропущено {total_skipped}.")
+    return total_filled, total_skipped, expected
 
 
 def run_fill_rows(

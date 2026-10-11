@@ -16,12 +16,14 @@ ONE_C_TITLE_MARKERS = ("1С:Предприятие", "Реализация то�
 # Добавить → номенклатура → Enter → клик Количество → клик Цена
 NOMENCLATURE_ENTERS = 1
 # Сколько первых позиций из Excel заполнять за запуск
-FILL_ROWS_LIMIT = 5
+FILL_ROWS_LIMIT = 15
 
 # Сверка суммы «Всего» в 1С (батчами)
 BATCH_CHECK_PERCENT = 0.05
 BATCH_CHECK_MIN = 5
 TOTAL_SUM_READ_RETRIES = 5
+# Сколько раз удалить батч и вбить заново при несхождении суммы
+MAX_SUM_RETRY_ATTEMPTS = 3
 # Если > 0 — сумма из 1С с НДС, делим на (1 + ставка) перед сравнением
 TOTAL_SUM_VAT_RATE = "0"
 
