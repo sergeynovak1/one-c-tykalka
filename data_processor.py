@@ -3,7 +3,7 @@
 Ожидается отчёт «Анализ контрагентов» (лист «Документ»).
 """
 import pandas as pd
-from decimal import Decimal, InvalidOperation, getcontext
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, getcontext
 import glob
 import os
 import re
@@ -213,8 +213,13 @@ def parse_total_text(text):
 
 
 def as_money(value) -> Decimal:
-    """Округление до копеек — как в поле «Всего» 1С."""
-    return to_decimal(value).quantize(Decimal("0.01"))
+    """Округление до копеек (арифметическое, как в 1С), не banker's."""
+    return to_decimal(value).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def line_amount(quantity, price) -> Decimal:
+    """Сумма строки: ROUND(qty * price, 2) — как колонка «Сумма» в 1С."""
+    return as_money(to_decimal(quantity) * to_decimal(price))
 
 
 def clean_spaces(text, max_length=100):
@@ -365,7 +370,10 @@ def get_total_sum(products_list):
     Returns:
         Decimal: сумма по всем позициям
     """
-    return sum(to_decimal(item[2]) * to_decimal(item[1]) for item in products_list)
+    return sum(
+        (line_amount(item[1], item[2]) for item in products_list),
+        Decimal("0"),
+    )
 
 
 def format_for_input(value):

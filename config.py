@@ -20,6 +20,8 @@ NOMENCLATURE_ENTERS = 1
 BATCH_CHECK_PERCENT = 0.05
 BATCH_CHECK_MIN = 5
 TOTAL_SUM_READ_RETRIES = 5
+# Допуск сверки «Всего» (копейки): 1С округляет построчно, накопленный шум
+SUM_MATCH_TOLERANCE = "0.02"
 # Сколько раз удалить батч и вбить заново при несхождении суммы
 MAX_SUM_RETRY_ATTEMPTS = 3
 # Если > 0 — сумма из 1С с НДС, делим на (1 + ставка) перед сравнением

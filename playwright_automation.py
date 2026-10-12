@@ -15,6 +15,7 @@ from config import (
     BATCH_CHECK_PERCENT,
     BATCH_CHECK_MIN,
     TOTAL_SUM_READ_RETRIES,
+    SUM_MATCH_TOLERANCE,
     MAX_SUM_RETRY_ATTEMPTS,
     TOTAL_SUM_VAT_RATE,
     AFTER_ADD_SETTLE_DELAY_MS,
@@ -24,7 +25,7 @@ from config import (
     FIELD_DELAY_MS,
     BETWEEN_ROWS_DELAY_MS,
 )
-from data_processor import as_money, parse_total_text, to_decimal
+from data_processor import as_money, line_amount, parse_total_text, to_decimal
 
 # Позиции, пропущенные из‑за отсутствия номенклатуры в 1С
 _skipped_products: list[tuple] = []
@@ -485,6 +486,7 @@ def delete_last_n_rows(page: Page, n: int) -> None:
 def _check_sum(page: Page, expected: Decimal, after_n: int) -> bool | None:
     """
     Сверяет «Всего» с ожиданием.
+    Допуск SUM_MATCH_TOLERANCE — шум построчного округления 1С.
     Returns:
         True — сошлось; False — не сошлось; None — не удалось прочитать.
     """
@@ -495,12 +497,20 @@ def _check_sum(page: Page, expected: Decimal, after_n: int) -> bool | None:
         return None
     exp_m = as_money(expected)
     act_m = as_money(actual)
-    if act_m == exp_m:
-        print(f"✅ Проверка после {after_n} записей: сумма сошлась ({exp_m})")
+    diff = abs(act_m - exp_m)
+    tol = as_money(SUM_MATCH_TOLERANCE)
+    if diff <= tol:
+        if diff == 0:
+            print(f"✅ Проверка после {after_n} записей: сумма сошлась ({exp_m})")
+        else:
+            print(
+                f"✅ Проверка после {after_n} записей: сумма ок "
+                f"(расчёт {exp_m}, 1С {act_m}, Δ={diff} ≤ {tol})"
+            )
         return True
     print(
         f"⚠ Сумма не сошлась после {after_n} записей! "
-        f"Расчётная: {exp_m}, в 1С: {act_m}"
+        f"Расчётная: {exp_m}, в 1С: {act_m}, Δ={diff}"
     )
     return False
 
@@ -526,7 +536,7 @@ def _fill_chunk(
         )
         if ok:
             filled += 1
-            chunk_sum += to_decimal(price) * to_decimal(quantity)
+            chunk_sum += line_amount(quantity, price)
 
     return filled, as_money(chunk_sum)
 
