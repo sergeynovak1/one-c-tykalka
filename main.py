@@ -2,7 +2,6 @@
 Главный модуль: парсинг Excel и заполнение строк в 1С (Playwright/CDP).
 Сначала: python start_chromium.py → открой документ → python main.py
 """
-from config import FILL_ROWS_LIMIT
 from data_processor import as_money, process_excel_file, get_total_sum
 from playwright_automation import run_fill_rows
 
@@ -18,12 +17,11 @@ def main():
         file_total = get_total_sum(products_list)
         print(f"\n💰 Сумма по файлу (все позиции): {file_total}")
 
-        batch = products_list[:FILL_ROWS_LIMIT]
-        print(f"\n🤖 Заполняю первые {len(batch)} строк через Playwright...")
-        for i, item in enumerate(batch, start=1):
+        print(f"\n🤖 Заполняю все {len(products_list)} строк через Playwright...")
+        for i, item in enumerate(products_list, start=1):
             print(f"  {i}. {item}")
 
-        skipped, expected = run_fill_rows(batch, limit=FILL_ROWS_LIMIT)
+        skipped, expected = run_fill_rows(products_list)
         if skipped:
             skipped_sum = get_total_sum(skipped)
             print(f"\n⚠ Пропущено позиций без номенклатуры в 1С: {len(skipped)}")

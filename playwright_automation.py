@@ -12,7 +12,6 @@ from config import (
     ONE_C_URL_MARKERS,
     ONE_C_TITLE_MARKERS,
     NOMENCLATURE_ENTERS,
-    FILL_ROWS_LIMIT,
     BATCH_CHECK_PERCENT,
     BATCH_CHECK_MIN,
     TOTAL_SUM_READ_RETRIES,
@@ -608,14 +607,14 @@ def fill_product_rows(page: Page, products: list[tuple]) -> tuple[int, int, Deci
 
 
 def run_fill_rows(
-    products: list[tuple], limit: int = FILL_ROWS_LIMIT
+    products: list[tuple],
 ) -> tuple[list[tuple], Decimal | None]:
     """
-    Точка входа: CDP → страница 1С → первые limit строк.
+    Точка входа: CDP → страница 1С → все переданные позиции до конца.
     Returns:
         (пропущенные позиции, ожидаемая сумма после заполнения)
     """
-    batch = list(products[:limit])
+    batch = list(products)
     if not batch:
         raise ValueError("Нет позиций для заполнения.")
 
@@ -637,4 +636,4 @@ def run_fill_rows(
 
 # Обратная совместимость
 def run_fill_first_row(nomenclature: str, quantity: str, price: str) -> None:
-    run_fill_rows([(nomenclature, quantity, price)], limit=1)
+    run_fill_rows([(nomenclature, quantity, price)])
