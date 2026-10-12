@@ -2,7 +2,7 @@
 Конфигурационные константы.
 """
 # Путь к Excel: отчёт «Анализ контрагентов»
-XLSX_FILE_PATTERN = 'C:/Users/novak/PycharmProjects/one-c-tykalka/*.xlsx'
+XLSX_FILE_PATTERN = 'C:/Users/novak/OneDrive/Desktop/ОФД/*.xlsx'
 
 # Chromium с remote debugging (вариант A)
 CDP_URL = "http://127.0.0.1:9222"
